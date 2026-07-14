@@ -256,6 +256,130 @@ alter table shop_items enable row level security;
 drop policy if exists "shop read" on shop_items;
 create policy "shop read" on shop_items for select using (true);
 
+-- ============================================================
+--  계정(비밀번호) + 관리자 모드
+-- ============================================================
+
+-- 학생 비밀번호: 별도 테이블 + RLS(정책 없음) = anon 키로 직접 못 읽음. 검증은 아래 함수로만.
+create table if not exists student_auth (
+  student_id bigint primary key references students(id) on delete cascade,
+  pw_hash    text not null
+);
+alter table student_auth enable row level security;
+
+-- 앱 설정(관리자 비밀번호). 마찬가지로 잠금.
+create table if not exists app_config (
+  key   text primary key,
+  value text not null
+);
+alter table app_config enable row level security;
+insert into app_config(key, value) values ('admin_pw', md5('2875'))
+  on conflict (key) do nothing;   -- 관리자 비번: 2875 (관리자 모드에서 변경 가능)
+
+-- 학생 등록(이름 + 비밀번호)
+create or replace function register_student(p_name text, p_password text)
+returns json language plpgsql security definer as $$
+declare new_id bigint; nm text;
+begin
+  nm := trim(p_name);
+  if length(nm) = 0 then raise exception '이름을 입력해 주세요.'; end if;
+  if length(coalesce(p_password,'')) = 0 then raise exception '비밀번호를 입력해 주세요.'; end if;
+  if exists(select 1 from students where name = nm) then raise exception '이미 등록된 이름입니다.'; end if;
+  insert into students(name) values (nm) returning id into new_id;
+  insert into student_auth(student_id, pw_hash) values (new_id, md5(p_password));
+  return json_build_object('id', new_id, 'name', nm);
+end; $$;
+
+-- 학생 비밀번호 확인 (해시는 반환하지 않고 참/거짓만)
+create or replace function verify_student(p_id bigint, p_password text)
+returns boolean language plpgsql security definer as $$
+declare ok boolean;
+begin
+  select (pw_hash = md5(coalesce(p_password,''))) into ok from student_auth where student_id = p_id;
+  return coalesce(ok, false);
+end; $$;
+
+-- 관리자 확인
+create or replace function is_admin(p_pw text) returns boolean
+language sql security definer stable as $$
+  select exists(select 1 from app_config where key = 'admin_pw' and value = md5(coalesce(p_pw,'')));
+$$;
+
+-- 관리자: 학생 능력치 조정 (포인트/LP/티어/전적)
+create or replace function admin_edit_student(p_admin_pw text, p_id bigint,
+   p_points int, p_lp int, p_tier text, p_wins int, p_losses int, p_streak int)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '관리자 비밀번호가 틀립니다.'; end if;
+  update students set
+     points = greatest(0, p_points),
+     lp     = greatest(0, least(100, p_lp)),
+     tier   = p_tier,
+     wins   = greatest(0, p_wins),
+     losses = greatest(0, p_losses),
+     streak = greatest(0, p_streak)
+   where id = p_id;
+end; $$;
+
+create or replace function admin_rename_student(p_admin_pw text, p_id bigint, p_name text)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '관리자 비밀번호가 틀립니다.'; end if;
+  if length(trim(p_name)) = 0 then raise exception '이름을 입력해 주세요.'; end if;
+  update students set name = trim(p_name) where id = p_id;
+end; $$;
+
+create or replace function admin_delete_student(p_admin_pw text, p_id bigint)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '관리자 비밀번호가 틀립니다.'; end if;
+  delete from match_history where winner_id = p_id or loser_id = p_id;
+  delete from students where id = p_id;   -- student_auth 는 cascade 로 함께 삭제
+end; $$;
+
+create or replace function admin_reset_student_pw(p_admin_pw text, p_id bigint, p_new text)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '관리자 비밀번호가 틀립니다.'; end if;
+  if length(coalesce(p_new,'')) = 0 then raise exception '새 비밀번호를 입력해 주세요.'; end if;
+  insert into student_auth(student_id, pw_hash) values (p_id, md5(p_new))
+    on conflict (student_id) do update set pw_hash = md5(p_new);
+end; $$;
+
+create or replace function admin_reset_season(p_admin_pw text)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '관리자 비밀번호가 틀립니다.'; end if;
+  delete from match_history;
+  update students set tier = '브론즈', lp = 0, wins = 0, losses = 0, streak = 0;
+end; $$;
+
+create or replace function admin_set_password(p_admin_pw text, p_new text)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '현재 관리자 비밀번호가 틀립니다.'; end if;
+  if length(coalesce(p_new,'')) = 0 then raise exception '새 비밀번호를 입력해 주세요.'; end if;
+  update app_config set value = md5(p_new) where key = 'admin_pw';
+end; $$;
+
+-- 계정/관리자 함수 권한
+grant execute on function register_student(text, text)      to anon, authenticated;
+grant execute on function verify_student(bigint, text)      to anon, authenticated;
+grant execute on function is_admin(text)                    to anon, authenticated;
+grant execute on function admin_edit_student(text, bigint, int, int, text, int, int, int) to anon, authenticated;
+grant execute on function admin_rename_student(text, bigint, text)   to anon, authenticated;
+grant execute on function admin_delete_student(text, bigint)         to anon, authenticated;
+grant execute on function admin_reset_student_pw(text, bigint, text) to anon, authenticated;
+grant execute on function admin_reset_season(text)          to anon, authenticated;
+grant execute on function admin_set_password(text, text)    to anon, authenticated;
+
+-- 등록은 register_student(비번 포함) 로만: 학생 테이블 직접 insert 정책 제거
+drop policy if exists "students insert" on students;
+-- 예전 무방비 함수는 anon 이 직접 못 부르게 차단 (관리자 함수로 대체됨)
+revoke execute on function rename_student(bigint, text) from anon, authenticated;
+revoke execute on function delete_student(bigint)       from anon, authenticated;
+revoke execute on function reset_season()               from anon, authenticated;
+
 -- ---------- 실시간 동기화(Realtime) ----------
 -- 한 기기에서 결과를 기록하면 다른 기기 랭킹이 자동 갱신되도록 테이블을 게시에 추가
 do $$
