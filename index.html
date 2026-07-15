@@ -22,9 +22,9 @@
   .wrap { max-width:520px; margin:0 auto; padding:14px 14px; }
 
   /* 탭 */
-  .tabs { display:flex; gap:8px; max-width:520px; margin:12px auto 0; padding:0 14px; }
-  .tab { flex:1; text-align:center; padding:11px 0; border-radius:12px; font-weight:700; font-size:14px;
-    background:#fff; color:var(--sub); box-shadow:var(--shadow); cursor:pointer; }
+  .tabs { display:flex; gap:5px; max-width:520px; margin:12px auto 0; padding:0 10px; }
+  .tab { flex:1; text-align:center; padding:10px 1px; border-radius:11px; font-weight:700; font-size:12.5px;
+    background:#fff; color:var(--sub); box-shadow:var(--shadow); cursor:pointer; white-space:nowrap; }
   .tab.active { background:var(--orange-deep); color:#fff; }
 
   .card { background:var(--card); border-radius:18px; box-shadow:var(--shadow); padding:14px 16px;
@@ -118,6 +118,21 @@
   .cpiece { pointer-events:none; }
   .cw { color:#fdfdfd; text-shadow:0 0 2px #000, 0 1px 1px rgba(0,0,0,.7); }
   .cb { color:#1c1c1c; text-shadow:0 0 1px rgba(255,255,255,.4); }
+  /* 장기판 */
+  #janggiArea { display:none; }
+  #janggiArea.active { display:block; }
+  #janggiBoard { display:grid; grid-template-columns:repeat(9,1fr); width:min(94vmin,432px); aspect-ratio:9/10;
+    background:#e6c179; border:4px solid #6b4423; border-radius:6px; overflow:hidden; touch-action:manipulation; }
+  .jsq { position:relative; display:flex; align-items:center; justify-content:center;
+    border:0.5px solid rgba(107,68,35,0.45); cursor:pointer; }
+  .jsq.palace { background:rgba(150,95,40,0.16); }
+  .jsq.sel { background:#f7ec6e !important; }
+  .jpiece { width:80%; aspect-ratio:1; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-weight:900; font-size:min(5.4vmin,23px); background:#f6e6bf; border:2px solid; box-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .jpiece.jr { color:#c0261b; border-color:#c0261b; }
+  .jpiece.jb { color:#0a7d3a; border-color:#0a7d3a; }
+  .jsq.legal::after { content:""; position:absolute; width:26%; height:26%; border-radius:50%; background:rgba(20,20,20,.32); }
+  .jsq.legal.cap::after { width:82%; height:82%; background:transparent; border:3px solid rgba(20,20,20,.38); border-radius:50%; }
   .rotate-hint { text-align:center; font-size:12.5px; color:#8a6d1a; background:#fff3d6;
     border:1px solid #ffdd8f; border-radius:10px; padding:7px 10px; margin:0 0 10px; }
   .players { display:flex; gap:10px; margin-bottom:12px; }
@@ -244,7 +259,9 @@
 
 <div class="tabs">
   <div class="tab active" id="tabRank" onclick="switchTab('rank')">🏅 랭킹</div>
-  <div class="tab" id="tabPlay" onclick="switchTab('play')">⚫ 오목</div>
+  <div class="tab" id="tabOmok" onclick="switchTab('omok')">⚫ 오목</div>
+  <div class="tab" id="tabChess" onclick="switchTab('chess')">♟️ 체스</div>
+  <div class="tab" id="tabJanggi" onclick="switchTab('janggi')">🏯 장기</div>
   <div class="tab" id="tabShop" onclick="switchTab('shop')">🛍️ 상점</div>
 </div>
 
@@ -262,10 +279,6 @@
   <!-- 오목 화면 -->
   <div id="playView">
     <div id="gameSetup">
-      <div class="gtype">
-        <button class="gt active" id="gtOmok" onclick="setGameType('omok')">⚫ 오목</button>
-        <button class="gt" id="gtChess" onclick="setGameType('chess')">♟️ 체스</button>
-      </div>
       <div class="row" style="display:flex;gap:10px;">
         <div style="flex:1">
           <label style="font-size:13px;color:var(--sub);font-weight:600;">⚫ 흑돌 (선공)</label>
@@ -311,6 +324,20 @@
       <div class="game-btns">
         <button class="btn btn-ghost" id="cResignBtn" onclick="chessResign()">🏳️ 기권</button>
         <button class="btn btn-primary" id="cReplayBtn" style="display:none" onclick="replayChess()">🔄 색 바꿔 다시</button>
+        <button class="btn btn-ghost" onclick="resetGame()">✕ 그만두기</button>
+      </div>
+    </div>
+
+    <div id="janggiArea">
+      <div class="players">
+        <div class="pl-card" id="jpRed"><div class="stone">🔴</div><div class="pn" id="jnRed">한</div></div>
+        <div class="pl-card" id="jpBlue"><div class="stone">🟢</div><div class="pn" id="jnBlue">초</div></div>
+      </div>
+      <div class="board-wrap"><div id="janggiBoard"></div></div>
+      <div class="game-msg" id="janggiMsg"></div>
+      <div class="game-btns">
+        <button class="btn btn-ghost" id="jResignBtn" onclick="janggiResign()">🏳️ 기권</button>
+        <button class="btn btn-primary" id="jReplayBtn" style="display:none" onclick="replayJanggi()">🔄 색 바꿔 다시</button>
         <button class="btn btn-ghost" onclick="resetGame()">✕ 그만두기</button>
       </div>
     </div>
@@ -377,6 +404,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="omok.js"></script>
 <script src="chess.js"></script>
+<script src="janggi.js"></script>
 <script>
 // ======================================================================
 //  ▼▼▼  배포 설정: Supabase 프로젝트 값 2개만 넣으세요  ▼▼▼
@@ -568,15 +596,19 @@ function fillSelects() {
 
 // ---------- 탭 ----------
 function switchTab(which) {
+  const isGame = which==="omok" || which==="chess" || which==="janggi";
   document.getElementById("rankView").style.display = which==="rank" ? "block" : "none";
-  document.getElementById("playView").style.display = which==="play" ? "block" : "none";
+  document.getElementById("playView").style.display = isGame ? "block" : "none";
   document.getElementById("shopView").style.display = which==="shop" ? "block" : "none";
   document.getElementById("rankFab").style.display = which==="rank" ? "flex" : "none";
   document.getElementById("tabRank").classList.toggle("active", which==="rank");
-  document.getElementById("tabPlay").classList.toggle("active", which==="play");
+  document.getElementById("tabOmok").classList.toggle("active", which==="omok");
+  document.getElementById("tabChess").classList.toggle("active", which==="chess");
+  document.getElementById("tabJanggi").classList.toggle("active", which==="janggi");
   document.getElementById("tabShop").classList.toggle("active", which==="shop");
   document.body.style.paddingBottom = which==="rank" ? "80px" : "20px";
   if(which==="shop") renderShop();
+  if(isGame && gameType !== which) { setGameType(which); resetGame(); }  // 다른 게임으로 바꾸면 설정화면으로
 }
 
 // ---------- 모달 ----------
@@ -931,7 +963,8 @@ async function startGame() {
     if(!bOk) throw new Error(`⚫ ${black.name} 님의 비밀번호가 틀립니다.`);
     if(!wOk) throw new Error(`⚪ ${white.name} 님의 비밀번호가 틀립니다.`);
     document.getElementById("blackPw").value = ""; document.getElementById("whitePw").value = "";
-    if(gameType === "chess") beginChess(white, black);   // 체스: white 슬롯=백(선공)
+    if(gameType === "chess") beginChess(white, black);       // 체스: white 슬롯=백(선공)
+    else if(gameType === "janggi") beginJanggi(white, black); // 장기: white 슬롯=한(아래·선공)
     else beginGame(black, white);
   } catch(e){ alert(e.message); }
   finally { btn.disabled = false; btn.textContent = "🔒 확인하고 대국 시작!"; }
@@ -968,10 +1001,11 @@ function toggleSound() {
 }
 
 function resetGame() {
-  game = null; chessGame = null;
+  game = null; chessGame = null; janggiGame = null;
   document.getElementById("gameSetup").style.display = "block";
   document.getElementById("gameArea").classList.remove("active");
   document.getElementById("chessArea").classList.remove("active");
+  document.getElementById("janggiArea").classList.remove("active");
 }
 
 function updateTurnUI() {
@@ -1111,11 +1145,10 @@ window.addEventListener("orientationchange", ()=> setTimeout(refitBoard, 250));
 let gameType = "omok";
 function setGameType(t){
   gameType = t;
-  document.getElementById("gtOmok").classList.toggle("active", t==="omok");
-  document.getElementById("gtChess").classList.toggle("active", t==="chess");
-  document.getElementById("setupNote").innerHTML = t==="chess"
-    ? "체스는 <b>백(白)이 먼저</b> 둡니다 · 두 학생 모두 비밀번호 입력"
-    : "본인 확인을 위해 <b>두 학생 모두 자기 비밀번호</b>를 입력해야 시작됩니다 · 정식 렌주룰";
+  const note = t==="chess" ? "♟️ 체스 · <b>백(白)이 먼저</b> 둡니다 · 두 학생 모두 비밀번호 입력"
+    : t==="janggi" ? "🏯 장기 · <b>백 칸=한(아래·선공), 흑 칸=초(위)</b> · 두 학생 모두 비밀번호 입력"
+    : "⚫ 오목(렌주룰) · <b>흑이 먼저</b> · 두 학생 모두 비밀번호 입력";
+  document.getElementById("setupNote").innerHTML = note;
 }
 
 let chessGame = null;
@@ -1207,6 +1240,81 @@ function chessResign(){
   const who = turn==="w" ? chessGame.white.name : chessGame.black.name;
   if(!confirm(`${who} 님이 기권할까요? 상대가 승리합니다.`)) return;
   endChess(Chess.opp(turn));
+}
+
+// ==================== 장기 ====================
+let janggiGame = null;
+const JG = { r:{k:"漢",a:"士",c:"車",o:"包",h:"馬",e:"象",p:"兵"}, b:{k:"楚",a:"士",c:"車",o:"包",h:"馬",e:"象",p:"卒"} };
+
+function beginJanggi(red, blue){   // red=한(아래·선공), blue=초(위)
+  janggiGame = { state: Janggi.initialState(), red, blue, sel:null, legal:[], over:false };
+  document.getElementById("gameSetup").style.display = "none";
+  document.getElementById("janggiArea").classList.add("active");
+  document.getElementById("jnRed").textContent = red.name;
+  document.getElementById("jnBlue").textContent = blue.name;
+  document.getElementById("jReplayBtn").style.display = "none";
+  document.getElementById("jResignBtn").disabled = false;
+  renderJanggi();
+}
+function replayJanggi(){ if(janggiGame) beginJanggi(janggiGame.blue, janggiGame.red); }
+
+function renderJanggi(){
+  const b = janggiGame.state.board, turn = janggiGame.state.turn;
+  const el = document.getElementById("janggiBoard"); el.innerHTML = "";
+  const legalSet = new Set(janggiGame.legal.map(m => m[0]+","+m[1]));
+  for(let r=0;r<10;r++) for(let c=0;c<9;c++){
+    const sq = document.createElement("div");
+    sq.className = "jsq" + (Janggi.inPalace(r,c) ? " palace" : "");
+    if(janggiGame.sel && janggiGame.sel[0]===r && janggiGame.sel[1]===c) sq.classList.add("sel");
+    if(legalSet.has(r+","+c)){ sq.classList.add("legal"); if(b[r][c]) sq.classList.add("cap"); }
+    const p = b[r][c];
+    if(p){ const d=document.createElement("div"); d.className="jpiece "+(Janggi.col(p)==="r"?"jr":"jb"); d.textContent=JG[Janggi.col(p)][Janggi.typ(p)]; sq.appendChild(d); }
+    sq.onclick = () => janggiClick(r,c);
+    el.appendChild(sq);
+  }
+  document.getElementById("jpRed").classList.toggle("turn", turn==="r" && !janggiGame.over);
+  document.getElementById("jpBlue").classList.toggle("turn", turn==="b" && !janggiGame.over);
+  if(!janggiGame.over){
+    const nm = turn==="r" ? janggiGame.red.name : janggiGame.blue.name;
+    document.getElementById("janggiMsg").textContent = `${turn==="r"?"🔴 한":"🟢 초"} (${nm}) 차례`;
+  }
+}
+function janggiClick(r,c){
+  if(!janggiGame || janggiGame.over) return;
+  const st = janggiGame.state, p = st.board[r][c];
+  if(janggiGame.sel && janggiGame.legal.some(m => m[0]===r && m[1]===c)){ doJanggiMove(janggiGame.sel, [r,c]); return; }
+  if(p && Janggi.col(p)===st.turn){ janggiGame.sel=[r,c]; janggiGame.legal=Janggi.legalMoves(st,r,c); renderJanggi(); }
+  else { janggiGame.sel=null; janggiGame.legal=[]; renderJanggi(); }
+}
+function doJanggiMove(from, to){
+  const st = janggiGame.state, mover = st.turn;
+  const { state, captured } = Janggi.applyMove(st, from, to);
+  janggiGame.state = state; janggiGame.sel=null; janggiGame.legal=[];
+  sfx.place(); renderJanggi();
+  if(captured && Janggi.typ(captured)==="k") endJanggi(mover);   // 궁 포획 = 승리
+}
+async function endJanggi(winnerColor){
+  janggiGame.over = true;
+  const winner = winnerColor==="r" ? janggiGame.red : janggiGame.blue;
+  const loser  = winnerColor==="r" ? janggiGame.blue : janggiGame.red;
+  document.getElementById("jResignBtn").disabled = true;
+  document.getElementById("jReplayBtn").style.display = "block";
+  document.getElementById("jpRed").classList.remove("turn"); document.getElementById("jpBlue").classList.remove("turn");
+  sfx.win(); confetti();
+  const msg = document.getElementById("janggiMsg");
+  msg.textContent = `🎉 ${winner.name} 승리! (궁 포획) 기록 중…`;
+  try {
+    const r = await recordMatch(winner.id, loser.id);
+    await loadStudents(); showResultToast(r);
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! — 랭킹 반영됨`;
+  } catch(e){ msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
+}
+function janggiResign(){
+  if(!janggiGame || janggiGame.over) return;
+  const turn = janggiGame.state.turn;
+  const who = turn==="r" ? janggiGame.red.name : janggiGame.blue.name;
+  if(!confirm(`${who} 님이 기권할까요? 상대가 승리합니다.`)) return;
+  endJanggi(Janggi.opp(turn));
 }
 
 renderTierGuide();
