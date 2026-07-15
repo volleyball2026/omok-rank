@@ -98,6 +98,26 @@
   #playView { display:none; }
   #gameArea { display:none; }
   #gameArea.active { display:block; }
+  #chessArea { display:none; }
+  #chessArea.active { display:block; }
+  /* 게임 종류 선택 */
+  .gtype { display:flex; gap:8px; margin-bottom:14px; }
+  .gt { flex:1; padding:12px 0; border-radius:12px; border:2px solid #f0e5d8; background:#fffdf9; color:var(--sub);
+    font-weight:800; font-size:15px; cursor:pointer; }
+  .gt.active { background:var(--orange-deep); color:#fff; border-color:var(--orange-deep); }
+  /* 체스판 */
+  #chessBoard { display:grid; grid-template-columns:repeat(8,1fr); width:min(90vmin,440px); aspect-ratio:1;
+    border:5px solid #6b4423; border-radius:6px; box-shadow:var(--shadow); overflow:hidden; touch-action:manipulation; }
+  .csq { display:flex; align-items:center; justify-content:center; font-size:min(8vmin,33px); line-height:1;
+    cursor:pointer; user-select:none; position:relative; }
+  .csq.light { background:#f0d9b5; } .csq.dark { background:#b58863; }
+  .csq.sel { background:#f7ec6e !important; }
+  .csq.legal::after { content:""; position:absolute; width:30%; height:30%; border-radius:50%; background:rgba(20,20,20,0.30); }
+  .csq.legal.cap::after { width:86%; height:86%; border-radius:50%; background:transparent; border:4px solid rgba(20,20,20,0.30); }
+  .csq.chk { background:#ff8f8f !important; }
+  .cpiece { pointer-events:none; }
+  .cw { color:#fdfdfd; text-shadow:0 0 2px #000, 0 1px 1px rgba(0,0,0,.7); }
+  .cb { color:#1c1c1c; text-shadow:0 0 1px rgba(255,255,255,.4); }
   .rotate-hint { text-align:center; font-size:12.5px; color:#8a6d1a; background:#fff3d6;
     border:1px solid #ffdd8f; border-radius:10px; padding:7px 10px; margin:0 0 10px; }
   .players { display:flex; gap:10px; margin-bottom:12px; }
@@ -242,6 +262,10 @@
   <!-- 오목 화면 -->
   <div id="playView">
     <div id="gameSetup">
+      <div class="gtype">
+        <button class="gt active" id="gtOmok" onclick="setGameType('omok')">⚫ 오목</button>
+        <button class="gt" id="gtChess" onclick="setGameType('chess')">♟️ 체스</button>
+      </div>
       <div class="row" style="display:flex;gap:10px;">
         <div style="flex:1">
           <label style="font-size:13px;color:var(--sub);font-weight:600;">⚫ 흑돌 (선공)</label>
@@ -255,7 +279,7 @@
         </div>
       </div>
       <button class="btn btn-primary" id="startBtn" style="margin-top:14px" onclick="startGame()">🔒 확인하고 대국 시작!</button>
-      <div class="setup-note">본인 확인을 위해 <b>두 학생 모두 자기 비밀번호</b>를 입력해야 시작됩니다 · 정식 렌주룰</div>
+      <div class="setup-note" id="setupNote">본인 확인을 위해 <b>두 학생 모두 자기 비밀번호</b>를 입력해야 시작됩니다 · 정식 렌주룰</div>
     </div>
 
     <div id="gameArea">
@@ -273,6 +297,20 @@
       <div class="game-btns">
         <button class="btn btn-ghost" id="undoBtn" onclick="undoMove()">↩ 무르기</button>
         <button class="btn btn-primary" id="replayBtn" style="display:none" onclick="replayGame()">🔄 색 바꿔 다시</button>
+        <button class="btn btn-ghost" onclick="resetGame()">✕ 그만두기</button>
+      </div>
+    </div>
+
+    <div id="chessArea">
+      <div class="players">
+        <div class="pl-card" id="cpWhite"><div class="stone">♙</div><div class="pn" id="cnWhite">백</div></div>
+        <div class="pl-card" id="cpBlack"><div class="stone">♟️</div><div class="pn" id="cnBlack">흑</div></div>
+      </div>
+      <div class="board-wrap"><div id="chessBoard"></div></div>
+      <div class="game-msg" id="chessMsg"></div>
+      <div class="game-btns">
+        <button class="btn btn-ghost" id="cResignBtn" onclick="chessResign()">🏳️ 기권</button>
+        <button class="btn btn-primary" id="cReplayBtn" style="display:none" onclick="replayChess()">🔄 색 바꿔 다시</button>
         <button class="btn btn-ghost" onclick="resetGame()">✕ 그만두기</button>
       </div>
     </div>
@@ -338,6 +376,7 @@
 <!-- 라이브러리 -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="omok.js"></script>
+<script src="chess.js"></script>
 <script>
 // ======================================================================
 //  ▼▼▼  배포 설정: Supabase 프로젝트 값 2개만 넣으세요  ▼▼▼
@@ -892,7 +931,8 @@ async function startGame() {
     if(!bOk) throw new Error(`⚫ ${black.name} 님의 비밀번호가 틀립니다.`);
     if(!wOk) throw new Error(`⚪ ${white.name} 님의 비밀번호가 틀립니다.`);
     document.getElementById("blackPw").value = ""; document.getElementById("whitePw").value = "";
-    beginGame(black, white);
+    if(gameType === "chess") beginChess(white, black);   // 체스: white 슬롯=백(선공)
+    else beginGame(black, white);
   } catch(e){ alert(e.message); }
   finally { btn.disabled = false; btn.textContent = "🔒 확인하고 대국 시작!"; }
 }
@@ -928,9 +968,10 @@ function toggleSound() {
 }
 
 function resetGame() {
-  game = null;
+  game = null; chessGame = null;
   document.getElementById("gameSetup").style.display = "block";
   document.getElementById("gameArea").classList.remove("active");
+  document.getElementById("chessArea").classList.remove("active");
 }
 
 function updateTurnUI() {
@@ -1065,6 +1106,108 @@ document.querySelectorAll(".modal-back").forEach(b=>{
 function refitBoard(){ if(game){ sizeBoard(); draw(); } }
 window.addEventListener("resize", refitBoard);
 window.addEventListener("orientationchange", ()=> setTimeout(refitBoard, 250));
+
+// ==================== 체스 ====================
+let gameType = "omok";
+function setGameType(t){
+  gameType = t;
+  document.getElementById("gtOmok").classList.toggle("active", t==="omok");
+  document.getElementById("gtChess").classList.toggle("active", t==="chess");
+  document.getElementById("setupNote").innerHTML = t==="chess"
+    ? "체스는 <b>백(白)이 먼저</b> 둡니다 · 두 학생 모두 비밀번호 입력"
+    : "본인 확인을 위해 <b>두 학생 모두 자기 비밀번호</b>를 입력해야 시작됩니다 · 정식 렌주룰";
+}
+
+let chessGame = null;
+const CG = { k:"♚", q:"♛", r:"♜", b:"♝", n:"♞", p:"♟" };
+
+function beginChess(white, black){
+  chessGame = { state: Chess.initialState(), white, black, sel:null, legal:[], over:false };
+  document.getElementById("gameSetup").style.display = "none";
+  document.getElementById("chessArea").classList.add("active");
+  document.getElementById("cnWhite").textContent = white.name;
+  document.getElementById("cnBlack").textContent = black.name;
+  document.getElementById("cReplayBtn").style.display = "none";
+  document.getElementById("cResignBtn").disabled = false;
+  renderChess();
+}
+function replayChess(){ if(chessGame) beginChess(chessGame.black, chessGame.white); }  // 색 교대
+
+function renderChess(){
+  const b = chessGame.state.board, turn = chessGame.state.turn;
+  const el = document.getElementById("chessBoard"); el.innerHTML = "";
+  const legalSet = new Set(chessGame.legal.map(m => m[0]+","+m[1]));
+  const chkKing = (!chessGame.over && Chess.inCheck(b, turn)) ? Chess.kingPos(b, turn) : null;
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const sq = document.createElement("div");
+    sq.className = "csq " + ((r+c)%2 ? "dark":"light");
+    if(chessGame.sel && chessGame.sel[0]===r && chessGame.sel[1]===c) sq.classList.add("sel");
+    if(legalSet.has(r+","+c)){ sq.classList.add("legal"); if(b[r][c]) sq.classList.add("cap"); }
+    if(chkKing && chkKing[0]===r && chkKing[1]===c) sq.classList.add("chk");
+    const p = b[r][c];
+    if(p){ const sp=document.createElement("span"); sp.className="cpiece "+(Chess.colorOf(p)==="w"?"cw":"cb"); sp.textContent=CG[Chess.typeOf(p)]; sq.appendChild(sp); }
+    sq.onclick = () => chessClick(r,c);
+    el.appendChild(sq);
+  }
+  document.getElementById("cpWhite").classList.toggle("turn", turn==="w" && !chessGame.over);
+  document.getElementById("cpBlack").classList.toggle("turn", turn==="b" && !chessGame.over);
+  if(!chessGame.over){
+    const nm = turn==="w" ? chessGame.white.name : chessGame.black.name;
+    const chk = Chess.inCheck(b, turn) ? " · ⚠️ 장군!" : "";
+    document.getElementById("chessMsg").textContent = `${turn==="w"?"⚪ 백":"⚫ 흑"} (${nm}) 차례${chk}`;
+  }
+}
+
+function chessClick(r,c){
+  if(!chessGame || chessGame.over) return;
+  const st = chessGame.state, p = st.board[r][c];
+  if(chessGame.sel && chessGame.legal.some(m => m[0]===r && m[1]===c)){ doChessMove(chessGame.sel, [r,c]); return; }
+  if(p && Chess.colorOf(p)===st.turn){ chessGame.sel=[r,c]; chessGame.legal=Chess.legalMoves(st,r,c); renderChess(); }
+  else { chessGame.sel=null; chessGame.legal=[]; renderChess(); }
+}
+
+function doChessMove(from, to){
+  const st = chessGame.state, mover = st.turn;
+  chessGame.state = Chess.applyMove(st, from, to);   // 승격은 기본 퀸
+  chessGame.sel = null; chessGame.legal = [];
+  sfx.place();
+  renderChess();
+  const stt = Chess.status(chessGame.state);
+  if(stt === "checkmate"){ endChess(mover); return; }
+  if(stt === "stalemate"){ chessDraw(); return; }
+}
+
+async function endChess(winnerColor){
+  chessGame.over = true;
+  const winner = winnerColor==="w" ? chessGame.white : chessGame.black;
+  const loser  = winnerColor==="w" ? chessGame.black : chessGame.white;
+  document.getElementById("cResignBtn").disabled = true;
+  document.getElementById("cReplayBtn").style.display = "block";
+  document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
+  sfx.win(); confetti();
+  const msg = document.getElementById("chessMsg");
+  msg.textContent = `🎉 ${winner.name} 승리! 기록 중…`;
+  try {
+    const r = await recordMatch(winner.id, loser.id);
+    await loadStudents(); showResultToast(r);
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! — 랭킹 반영됨`;
+  } catch(e){ msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
+}
+function chessDraw(){
+  chessGame.over = true;
+  document.getElementById("cResignBtn").disabled = true;
+  document.getElementById("cReplayBtn").style.display = "block";
+  document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
+  sfx.draw();
+  document.getElementById("chessMsg").textContent = "🤝 스테일메이트 · 무승부 (점수 변동 없음)";
+}
+function chessResign(){
+  if(!chessGame || chessGame.over) return;
+  const turn = chessGame.state.turn;
+  const who = turn==="w" ? chessGame.white.name : chessGame.black.name;
+  if(!confirm(`${who} 님이 기권할까요? 상대가 승리합니다.`)) return;
+  endChess(Chess.opp(turn));
+}
 
 renderTierGuide();
 
