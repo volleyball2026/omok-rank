@@ -584,13 +584,14 @@ function renderList() {
     </div>`).join("");
 }
 function fillSelects() {
-  const opts = students.map(s => `<option value="${s.id}">${esc(s.name)} (${s.tier} ${s.lp}LP)</option>`).join("");
+  const byName = [...students].sort((a, b) => a.name.localeCompare(b.name, "ko"));  // 가나다 순
+  const opts = byName.map(s => `<option value="${s.id}">${esc(s.name)} (${s.tier} ${s.lp}LP)</option>`).join("");
   ["winnerSel","loserSel","blackSel","whiteSel"].forEach(id => {
     const sel = document.getElementById(id); const prev = sel.value;
     sel.innerHTML = opts; if (prev) sel.value = prev;
   });
   const shop = document.getElementById("shopWho"); const prevS = shop.value;
-  shop.innerHTML = students.map(s => `<option value="${s.id}">${esc(s.name)} · 💰${s.points||0}P</option>`).join("");
+  shop.innerHTML = byName.map(s => `<option value="${s.id}">${esc(s.name)} · 💰${s.points||0}P</option>`).join("");
   if (prevS) shop.value = prevS;
 }
 
