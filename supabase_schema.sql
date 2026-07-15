@@ -435,3 +435,22 @@ begin
   alter publication supabase_realtime add table match_history;
 exception when others then null;
 end $$;
+
+-- ============================================================
+--  복기(게임 수순 저장) - game_records
+-- ============================================================
+create table if not exists game_records (
+  id         bigint generated always as identity primary key,
+  game_type  text not null,              -- omok | chess | janggi
+  p1_id      bigint, p1_name text,       -- 오목:흑 / 체스:백 / 장기:한 (선공)
+  p2_id      bigint, p2_name text,       -- 오목:백 / 체스:흑 / 장기:초 (후공)
+  winner_id  bigint,                     -- null 이면 무승부
+  result     text not null,              -- win | draw
+  moves      jsonb not null,             -- [[..],[..]] 게임별 수순
+  created_at timestamptz not null default now()
+);
+alter table game_records enable row level security;
+drop policy if exists "gr read"   on game_records;
+drop policy if exists "gr insert" on game_records;
+create policy "gr read"   on game_records for select using (true);
+create policy "gr insert" on game_records for insert with check (true);

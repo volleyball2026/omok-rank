@@ -133,6 +133,24 @@
   .jpiece.jb { color:#0a7d3a; border-color:#0a7d3a; }
   .jsq.legal::after { content:""; position:absolute; width:26%; height:26%; border-radius:50%; background:rgba(20,20,20,.32); }
   .jsq.legal.cap::after { width:82%; height:82%; background:transparent; border:3px solid rgba(20,20,20,.38); border-radius:50%; }
+  /* 복기 보드 */
+  .rgrid { display:grid; background:#e6c179; border:3px solid #6b4423; border-radius:5px; overflow:hidden; margin:0 auto; }
+  .rgrid.rchess { font-size:min(6.5vmin,25px); }
+  .rgrid.rjanggi .rdisk { font-size:min(4.2vmin,17px); }
+  .rsq { position:relative; display:flex; align-items:center; justify-content:center;
+    border:0.5px solid rgba(107,68,35,0.4); font-weight:900; }
+  .rsq.light { background:#f0d9b5; } .rsq.dark { background:#b58863; }
+  .rsq.palace { background:rgba(150,95,40,0.16); }
+  .rsq.rlast { box-shadow:inset 0 0 0 3px #f7d84e; }
+  .rsq .rc { color:#fdfdfd; text-shadow:0 0 2px #000,0 1px 1px rgba(0,0,0,.7); }
+  .rsq .rcb { color:#1c1c1c; text-shadow:0 0 1px rgba(255,255,255,.4); }
+  .rdisk { width:84%; aspect-ratio:1; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:#f6e6bf; border:2px solid; box-shadow:0 1px 1px rgba(0,0,0,.3); }
+  .rdisk.jr { color:#c0261b; border-color:#c0261b; } .rdisk.jb { color:#0a7d3a; border-color:#0a7d3a; }
+  .rstone { width:76%; aspect-ratio:1; border-radius:50%; }
+  .rstone.bk { background:radial-gradient(circle at 35% 32%,#555,#111); }
+  .rstone.wt { background:radial-gradient(circle at 35% 32%,#fff,#cfd3d8); border:1px solid #ccc; }
+  #replayCount { pointer-events:none; }
   .rotate-hint { text-align:center; font-size:12.5px; color:#8a6d1a; background:#fff3d6;
     border:1px solid #ffdd8f; border-radius:10px; padding:7px 10px; margin:0 0 10px; }
   .players { display:flex; gap:10px; margin-bottom:12px; }
@@ -398,6 +416,9 @@
 <!-- 관리자 모드 -->
 <div class="modal-back" id="adminBack"><div class="modal" id="adminBody"></div></div>
 
+<!-- 복기 -->
+<div class="modal-back" id="replayBack"><div class="modal" id="replayBody"></div></div>
+
 <div class="toast" id="toast"></div>
 
 <!-- 라이브러리 -->
@@ -494,6 +515,20 @@ async function pairBlocked(aId, bId) {
   const { data } = await sb.from("match_history").select("winner_id,loser_id")
     .or(`winner_id.eq.${aId},loser_id.eq.${aId}`).order("id", { ascending: false }).limit(2);
   return !!(data && data.length === 2 && data.every(m => m.winner_id === bId || m.loser_id === bId));
+}
+async function saveGameRecord(gameType, p1, p2, winnerId, result, moves) {
+  try {
+    await sb.from("game_records").insert({
+      game_type: gameType, p1_id: p1.id, p1_name: p1.name, p2_id: p2.id, p2_name: p2.name,
+      winner_id: winnerId, result, moves,
+    });
+  } catch (e) { /* 저장 실패해도 게임 진행엔 영향 없음 */ }
+}
+async function fetchGameRecords(studentId, limit = 20) {
+  const { data, error } = await sb.from("game_records").select("*")
+    .or(`p1_id.eq.${studentId},p2_id.eq.${studentId}`).order("id", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data || [];
 }
 async function fetchRecentMatches(limit = 10) {
   const { data, error } = await sb.from("match_history").select("*").order("id", { ascending: false }).limit(limit);
@@ -686,6 +721,7 @@ async function openDetail(id) {
         <span style="font-weight:800;color:#e0a800;margin-left:6px">💰 ${s.points||0} P</span></div>
       <div style="display:flex;gap:10px;text-align:center;margin-bottom:18px">
         ${statBox(s.wins,'승')}${statBox(s.losses,'패')}${statBox(s.win_rate+'%','승률')}</div>
+      <button class="btn btn-primary" style="margin:4px 0 16px" onclick="openReplayList(${s.id})">📖 복기 — 내 대국 다시보기</button>
       <h3 style="font-size:15px;margin:0 0 6px">최근 전적</h3>${rows}`;
   } catch(e){ document.getElementById("detailBody").innerHTML = `<div class="empty">${e.message}</div>`; }
 }
@@ -883,8 +919,13 @@ function resolveStone(equipId, side) {
   }
   return side === "white" ? { in:"#fff", out:"#cfd3d8" } : { in:"#555", out:"#111" };
 }
-function resolveGameSkins(black, white) {
-  const board = (SHOP[black.equip_board] && SHOP[black.equip_board].data)
+function hasCustomBoard(s){
+  return !!(s && s.equip_board && s.equip_board !== "board_wood" && SHOP[s.equip_board]);
+}
+function resolveGameSkins(black, white, boardOwner) {
+  let board;
+  if(boardOwner && SHOP[boardOwner.equip_board]) board = SHOP[boardOwner.equip_board].data;   // 선택된 학생 판
+  else board = (SHOP[black.equip_board] && SHOP[black.equip_board].data)
              || (SHOP[white.equip_board] && SHOP[white.equip_board].data) || DEFAULT_BOARD;
   const stone = {};
   stone[Omok.BLACK] = resolveStone(black.equip_stone, "black");
@@ -966,14 +1007,19 @@ async function startGame() {
     document.getElementById("blackPw").value = ""; document.getElementById("whitePw").value = "";
     if(gameType === "chess") beginChess(white, black);       // 체스: white 슬롯=백(선공)
     else if(gameType === "janggi") beginJanggi(white, black); // 장기: white 슬롯=한(아래·선공)
-    else beginGame(black, white);
+    else {
+      let owner = null;   // 둘 다 커스텀 바둑판이 있으면 누구 판으로 둘지 선택
+      if(hasCustomBoard(black) && hasCustomBoard(white))
+        owner = confirm(`두 학생 모두 바둑판 스킨이 있어요! 누구 판으로 둘까요?\n\n[확인] ⚫ ${black.name} 님 판\n[취소] ⚪ ${white.name} 님 판`) ? black : white;
+      beginGame(black, white, owner);
+    }
   } catch(e){ alert(e.message); }
   finally { btn.disabled = false; btn.textContent = "🔒 확인하고 대국 시작!"; }
 }
 
-function beginGame(black, white) {
+function beginGame(black, white, boardOwner) {
   game = { board: Omok.createBoard(), turn: Omok.BLACK, over: false, history: [], black, white,
-           skins: resolveGameSkins(black, white) };
+           boardOwner, skins: resolveGameSkins(black, white, boardOwner) };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("gameArea").classList.add("active");
   document.getElementById("pnBlack").textContent = black.name;
@@ -1114,6 +1160,7 @@ async function endGame(color) {
   document.getElementById("replayBtn").style.display = "block";
   const winner = color===Omok.BLACK ? game.black : game.white;
   const loser  = color===Omok.BLACK ? game.white : game.black;
+  saveGameRecord("omok", game.black, game.white, winner.id, "win", game.history.map(h => [h.r, h.c]));
   const msg = document.getElementById("gameMsg");
   msg.textContent = `🎉 ${winner.name} 승리! 결과 기록 중…`;
   try {
@@ -1130,6 +1177,7 @@ function endDraw() {
   game.over = true; updateTurnUI(); draw();
   sfx.draw();
   document.getElementById("replayBtn").style.display = "block";
+  saveGameRecord("omok", game.black, game.white, null, "draw", game.history.map(h => [h.r, h.c]));
   document.getElementById("gameMsg").innerHTML = `🤝 무승부! 판이 가득 찼어요 (점수 변동 없음)`;
 }
 
@@ -1156,7 +1204,7 @@ let chessGame = null;
 const CG = { k:"♚", q:"♛", r:"♜", b:"♝", n:"♞", p:"♟" };
 
 function beginChess(white, black){
-  chessGame = { state: Chess.initialState(), white, black, sel:null, legal:[], over:false };
+  chessGame = { state: Chess.initialState(), white, black, sel:null, legal:[], over:false, moves:[] };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("chessArea").classList.add("active");
   document.getElementById("cnWhite").textContent = white.name;
@@ -1202,6 +1250,7 @@ function chessClick(r,c){
 
 function doChessMove(from, to){
   const st = chessGame.state, mover = st.turn;
+  chessGame.moves.push([from[0], from[1], to[0], to[1]]);
   chessGame.state = Chess.applyMove(st, from, to);   // 승격은 기본 퀸
   chessGame.sel = null; chessGame.legal = [];
   sfx.place();
@@ -1215,6 +1264,7 @@ async function endChess(winnerColor){
   chessGame.over = true;
   const winner = winnerColor==="w" ? chessGame.white : chessGame.black;
   const loser  = winnerColor==="w" ? chessGame.black : chessGame.white;
+  saveGameRecord("chess", chessGame.white, chessGame.black, winner.id, "win", chessGame.moves);
   document.getElementById("cResignBtn").disabled = true;
   document.getElementById("cReplayBtn").style.display = "block";
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
@@ -1233,6 +1283,7 @@ function chessDraw(){
   document.getElementById("cReplayBtn").style.display = "block";
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
   sfx.draw();
+  saveGameRecord("chess", chessGame.white, chessGame.black, null, "draw", chessGame.moves);
   document.getElementById("chessMsg").textContent = "🤝 스테일메이트 · 무승부 (점수 변동 없음)";
 }
 function chessResign(){
@@ -1248,7 +1299,7 @@ let janggiGame = null;
 const JG = { r:{k:"漢",a:"士",c:"車",o:"包",h:"馬",e:"象",p:"兵"}, b:{k:"楚",a:"士",c:"車",o:"包",h:"馬",e:"象",p:"卒"} };
 
 function beginJanggi(red, blue){   // red=한(아래·선공), blue=초(위)
-  janggiGame = { state: Janggi.initialState(), red, blue, sel:null, legal:[], over:false };
+  janggiGame = { state: Janggi.initialState(), red, blue, sel:null, legal:[], over:false, moves:[] };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("janggiArea").classList.add("active");
   document.getElementById("jnRed").textContent = red.name;
@@ -1289,6 +1340,7 @@ function janggiClick(r,c){
 }
 function doJanggiMove(from, to){
   const st = janggiGame.state, mover = st.turn;
+  janggiGame.moves.push([from[0], from[1], to[0], to[1]]);
   const { state, captured } = Janggi.applyMove(st, from, to);
   janggiGame.state = state; janggiGame.sel=null; janggiGame.legal=[];
   sfx.place(); renderJanggi();
@@ -1298,6 +1350,7 @@ async function endJanggi(winnerColor){
   janggiGame.over = true;
   const winner = winnerColor==="r" ? janggiGame.red : janggiGame.blue;
   const loser  = winnerColor==="r" ? janggiGame.blue : janggiGame.red;
+  saveGameRecord("janggi", janggiGame.red, janggiGame.blue, winner.id, "win", janggiGame.moves);
   document.getElementById("jResignBtn").disabled = true;
   document.getElementById("jReplayBtn").style.display = "block";
   document.getElementById("jpRed").classList.remove("turn"); document.getElementById("jpBlue").classList.remove("turn");
@@ -1316,6 +1369,109 @@ function janggiResign(){
   const who = turn==="r" ? janggiGame.red.name : janggiGame.blue.name;
   if(!confirm(`${who} 님이 기권할까요? 상대가 승리합니다.`)) return;
   endJanggi(Janggi.opp(turn));
+}
+
+// ==================== 복기 (다시보기) ====================
+let replayGames = {};
+let review = null;
+const GAME_LABEL = { omok:"⚫ 오목", chess:"♟️ 체스", janggi:"🏯 장기" };
+
+async function openReplayList(id){
+  const s = students.find(x => x.id === id);
+  const body = document.getElementById("detailBody");
+  openModal("detailBack");
+  body.innerHTML = `<span class="close-x" onclick="closeModal('detailBack')">✕</span>
+    <h2>📖 ${esc(s ? s.name : "")} 복기</h2><div class="empty">불러오는 중…</div>`;
+  try {
+    const games = await fetchGameRecords(id, 20);
+    replayGames = {}; games.forEach(g => replayGames[g.id] = g);
+    const list = games.length
+      ? games.map(g => replayRow(g, id)).join("")
+      : `<div class="empty">아직 저장된 대국이 없어요.<br>대국을 한 판 두면 여기서 다시 볼 수 있어요!</div>`;
+    body.innerHTML = `<span class="close-x" onclick="closeModal('detailBack')">✕</span>
+      <h2>📖 ${esc(s.name)} 복기</h2>
+      <div class="tg-note" style="margin:0 0 10px">대국을 눌러 수순을 하나씩 되짚어 보며 배워요 🧠</div>
+      ${list}
+      <button class="mini-btn" style="margin-top:12px" onclick="openDetail(${id})">← 돌아가기</button>`;
+  } catch(e){ body.innerHTML = `<div class="empty">${e.message}</div>`; }
+}
+function replayRow(g, viewerId){
+  const icon = g.game_type === "omok" ? "⚫" : g.game_type === "chess" ? "♟️" : "🏯";
+  const opp = g.p1_id === viewerId ? g.p2_name : g.p1_name;
+  const res = g.result === "draw" ? '<span style="color:var(--sub)">무</span>'
+    : g.winner_id === viewerId ? '<span class="lp-up">승</span>' : '<span class="lp-down">패</span>';
+  return `<div class="feed-row" style="cursor:pointer" onclick="openReplay(${g.id})">
+    <span>${icon}</span><span class="vs">vs ${esc(opp)} · ${g.moves.length}수</span>${res}
+    <span style="color:var(--orange-deep);font-weight:800">▶</span></div>`;
+}
+function openReplay(gameId){
+  const g = replayGames[gameId]; if(!g) return;
+  review = { game: g, idx: g.moves.length };
+  const resultTxt = g.result === "draw" ? "무승부"
+    : (g.winner_id === g.p1_id ? g.p1_name : g.p2_name) + " 승";
+  document.getElementById("replayBody").innerHTML = `
+    <span class="close-x" onclick="closeModal('replayBack')">✕</span>
+    <h2>${GAME_LABEL[g.game_type]} 복기</h2>
+    <div class="tg-note" style="margin:0 0 8px">${esc(g.p1_name)} vs ${esc(g.p2_name)} · ${esc(resultTxt)}</div>
+    <div class="board-wrap"><div id="replayBoard"></div></div>
+    <div class="game-btns" style="margin-top:12px">
+      <button class="btn btn-ghost" onclick="replaySeek(0)">⏮</button>
+      <button class="btn btn-ghost" onclick="replayStep(-1)">◀ 이전</button>
+      <button class="btn btn-primary" id="replayCount"></button>
+      <button class="btn btn-ghost" onclick="replayStep(1)">다음 ▶</button>
+      <button class="btn btn-ghost" onclick="replaySeek(review.game.moves.length)">⏭</button>
+    </div>`;
+  openModal("replayBack");
+  renderReplay();
+}
+function replayStep(d){ const n = review.game.moves.length; review.idx = Math.max(0, Math.min(n, review.idx + d)); renderReplay(); }
+function replaySeek(i){ review.idx = i; renderReplay(); }
+
+function reconstructChess(moves, upto){
+  let s = Chess.initialState();
+  for(let i=0;i<upto;i++){ const m = moves[i]; s = Chess.applyMove(s, [m[0],m[1]], [m[2],m[3]]); }
+  return s.board;
+}
+function reconstructJanggi(moves, upto){
+  let s = Janggi.initialState();
+  for(let i=0;i<upto;i++){ const m = moves[i]; s = Janggi.applyMove(s, [m[0],m[1]], [m[2],m[3]]).state; }
+  return s.board;
+}
+function renderReplay(){
+  const g = review.game, idx = review.idx, el = document.getElementById("replayBoard");
+  const last = idx > 0 ? g.moves[idx-1] : null;
+  if(g.game_type === "omok") el.innerHTML = replayOmokHTML(g.moves, idx, last);
+  else if(g.game_type === "chess") el.innerHTML = replayGridHTML(reconstructChess(g.moves, idx), 8, 8, "chess", last);
+  else el.innerHTML = replayGridHTML(reconstructJanggi(g.moves, idx), 10, 9, "janggi", last);
+  document.getElementById("replayCount").textContent = `${idx} / ${g.moves.length} 수`;
+}
+function replayOmokHTML(moves, upto, last){
+  const N = 15, b = Array.from({length:N},()=>Array(N).fill(0));
+  for(let i=0;i<upto;i++){ const [r,c] = moves[i]; b[r][c] = i % 2 === 0 ? 1 : 2; }
+  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);aspect-ratio:1;width:min(84vmin,340px)">`;
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const isLast = last && last[0]===r && last[1]===c;
+    const inner = b[r][c] ? `<span class="rstone ${b[r][c]===1?'bk':'wt'}"></span>` : "";
+    h += `<div class="rsq${isLast?' rlast':''}">${inner}</div>`;
+  }
+  return h + `</div>`;
+}
+function replayGridHTML(board, rows, cols, type, last){
+  const w = "width:min(84vmin,340px)";
+  let h = `<div class="rgrid r${type}" style="grid-template-columns:repeat(${cols},1fr);aspect-ratio:${cols}/${rows};${w}">`;
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const isLast = last && ((last[0]===r&&last[1]===c) || (last[2]===r&&last[3]===c));
+    const p = board[r][c]; let extra = "", inner = "";
+    if(type === "chess"){
+      extra = (r+c)%2 ? "dark" : "light";
+      if(p) inner = `<span class="${Chess.colorOf(p)==='w'?'rc':'rcb'}">${CG[Chess.typeOf(p)]}</span>`;
+    } else {
+      extra = Janggi.inPalace(r,c) ? "palace" : "";
+      if(p) inner = `<span class="rdisk ${Janggi.col(p)==='r'?'jr':'jb'}">${JG[Janggi.col(p)][Janggi.typ(p)]}</span>`;
+    }
+    h += `<div class="rsq ${extra}${isLast?' rlast':''}">${inner}</div>`;
+  }
+  return h + `</div>`;
 }
 
 renderTierGuide();
