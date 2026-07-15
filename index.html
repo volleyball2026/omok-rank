@@ -40,6 +40,14 @@
   .info .sub { font-size:12.5px; color:var(--sub); margin-top:3px; }
   .tier-pill { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; border-radius:999px;
     font-size:12px; font-weight:700; color:#fff; }
+  /* 티어 안내표 */
+  .tier-guide { display:flex; align-items:center; justify-content:center; gap:2px; background:#fff;
+    border-radius:16px; box-shadow:var(--shadow); padding:12px 8px; margin-bottom:8px; flex-wrap:wrap; }
+  .tg-item { display:flex; flex-direction:column; align-items:center; gap:2px; padding:4px 6px;
+    border-bottom:3px solid; border-radius:4px; min-width:48px; }
+  .tg-em { font-size:20px; } .tg-nm { font-size:11px; font-weight:800; }
+  .tg-arrow { color:var(--sub); font-size:16px; font-weight:800; }
+  .tg-note { text-align:center; font-size:12px; color:var(--sub); font-weight:600; margin:0 0 14px; }
   .lp-box { text-align:right; flex:none; }
   .lp-box .lp { font-size:18px; font-weight:800; color:var(--orange-deep); }
   .lp-box .lp small { font-size:11px; color:var(--sub); font-weight:600; }
@@ -223,6 +231,7 @@
 <div class="wrap">
   <!-- 랭킹 화면 -->
   <div id="rankView">
+    <div id="tierGuide"></div>
     <div id="list"></div>
     <div id="feedWrap"></div>
     <div class="season-reset" id="seasonResetWrap">
@@ -413,6 +422,12 @@ async function recordMatch(winnerId, loserId) {
   if (error) throw new Error(error.message);
   return data;
 }
+async function pairBlocked(aId, bId) {
+  // a의 최근 2경기가 모두 b 상대면 연속 2판 -> 3번째 금지
+  const { data } = await sb.from("match_history").select("winner_id,loser_id")
+    .or(`winner_id.eq.${aId},loser_id.eq.${aId}`).order("id", { ascending: false }).limit(2);
+  return !!(data && data.length === 2 && data.every(m => m.winner_id === bId || m.loser_id === bId));
+}
 async function fetchRecentMatches(limit = 10) {
   const { data, error } = await sb.from("match_history").select("*").order("id", { ascending: false }).limit(limit);
   if (error) throw error;
@@ -469,6 +484,14 @@ function setupRealtime() {
     .subscribe();
 }
 function tierPill(t){ return `<span class="tier-pill" style="background:${TIER_COLORS[t]||'#999'}">${TIER_EMOJI[t]||''} ${t}</span>`; }
+function renderTierGuide(){
+  const el = document.getElementById("tierGuide"); if(!el) return;
+  el.innerHTML = `<div class="tier-guide">` +
+    TIERS.map((t,i) => `<div class="tg-item" style="border-color:${TIER_COLORS[t]}">
+        <div class="tg-em">${TIER_EMOJI[t]}</div><div class="tg-nm">${t}</div></div>` +
+      (i < TIERS.length-1 ? `<div class="tg-arrow">›</div>` : "")).join("") +
+    `</div><div class="tg-note">💯 100 LP 모으면 다음 티어로 승급! · 승 +15 / 패 −10 (상대 티어에 따라 조금씩 달라져요)</div>`;
+}
 function nextTierText(s){
   if(s.tier === "다이아몬드") return "👑 최고 티어";
   const idx = tIdx(s.tier);
@@ -857,6 +880,7 @@ async function startGame() {
   const bId = +document.getElementById("blackSel").value;
   const wId = +document.getElementById("whiteSel").value;
   if(bId === wId){ alert("흑돌과 백돌은 다른 학생이어야 해요."); return; }
+  if(await pairBlocked(bId, wId)){ alert("같은 친구와는 연속 2판까지예요! 다른 친구와 한 판 두고 오세요. 🔄"); return; }
   const bPw = document.getElementById("blackPw").value;
   const wPw = document.getElementById("whitePw").value;
   if(!bPw || !wPw){ alert("두 학생 모두 비밀번호를 입력해야 합니다."); return; }
@@ -987,10 +1011,10 @@ function tryMove(r,c) {
   game.board[r][c] = color;
   game.history.push({r,c});
   sfx.place();
-  draw();
-  if(res.win){ endGame(color); return; }
+  if(res.win){ endGame(color); return; }        // endGame/endDraw 가 draw() 수행
   if(Omok.isFull(game.board)){ endDraw(); return; }
   game.turn = color===Omok.BLACK ? Omok.WHITE : Omok.BLACK;
+  draw();   // 턴을 넘긴 뒤 그려야 금수 표시(흑 전용)가 백 차례에 남지 않음
   updateTurnUI();
 }
 
@@ -1041,6 +1065,8 @@ document.querySelectorAll(".modal-back").forEach(b=>{
 function refitBoard(){ if(game){ sizeBoard(); draw(); } }
 window.addEventListener("resize", refitBoard);
 window.addEventListener("orientationchange", ()=> setTimeout(refitBoard, 250));
+
+renderTierGuide();
 
 loadStudents();
 </script>

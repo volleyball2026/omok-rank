@@ -49,6 +49,22 @@ on conflict (id) do update
   set name = excluded.name, price = excluded.price, kind = excluded.kind,
       data = excluded.data, sort = excluded.sort;
 
+-- 추가 스킨 (#6)
+insert into shop_items (id, name, price, kind, data, sort) values
+  ('board_ice',    '얼음 판',       300, 'board', '{"bg":"linear-gradient(135deg,#e3f4ff,#b8d8f0)","line":"#4a7ba6","star":"#4a7ba6"}', 6),
+  ('board_lava',   '용암 판',       450, 'board', '{"bg":"linear-gradient(135deg,#ff9a5a,#c0261b)","line":"#5a1006","star":"#ffd24d"}', 7),
+  ('board_space',  '우주 판',       700, 'board', '{"bg":"linear-gradient(135deg,#2a1a4a,#4a2c7a)","line":"#b79bff","star":"#ffd84d"}', 8),
+  ('board_hanji',  '한지 판',       250, 'board', '{"bg":"#f3e7cf","line":"#8a6a3a","star":"#8a6a3a"}', 9),
+  ('stone_emerald','에메랄드 바둑알', 200, 'stone', '{"in":"#b7ffd8","out":"#0f8a55","glow":"#5cf0a8"}', 7),
+  ('stone_neon',   '네온 바둑알',    350, 'stone', '{"in":"#e0ff70","out":"#7ac400","glow":"#c8ff3a"}', 8),
+  ('stone_candy',  '캔디 바둑알',    250, 'stone', '{"in":"#ffd0ec","out":"#ff5fa8","glow":"#ff9ad0"}', 9),
+  ('stone_pearl',  '진주 바둑알',    300, 'stone', '{"in":"#ffffff","out":"#dfe6f0","glow":"#eaf2ff"}', 10),
+  ('stone_flame',  '불꽃 바둑알',    500, 'stone', '{"in":"#fff2a8","out":"#e03b00","glow":"#ff7a1a"}', 11),
+  ('stone_ocean',  '심해 바둑알',    400, 'stone', '{"in":"#8fdfff","out":"#0a4a8a","glow":"#3aa8ff"}', 12)
+on conflict (id) do update
+  set name = excluded.name, price = excluded.price, kind = excluded.kind,
+      data = excluded.data, sort = excluded.sort;
+
 create table if not exists match_history (
   id               bigint generated always as identity primary key,
   winner_id        bigint references students(id) on delete set null,
@@ -86,7 +102,9 @@ security definer          -- RLS 우회하여 점수 갱신 (아래 정책으로
 as $$
 declare
   w students; l students;
-  diff int; change int;
+  diff int;
+  win_gain int; lose_loss int; w_pts int; l_pts int;
+  consec int; pair_recent int;
   w_idx int; l_idx int; w_lp int; l_lp int;
   new_w_tier text; new_l_tier text;
 begin
@@ -100,13 +118,38 @@ begin
     raise exception '학생을 찾을 수 없습니다.';
   end if;
 
-  -- LP 변동량 (승자 획득 = 패자 감점)
-  diff   := tier_index(w.tier) - tier_index(l.tier);
-  change := greatest(10, least(30, 15 - 5 * diff));
+  -- (#1) 연속 리매치 제한: 승자의 최근 2경기가 모두 이 상대였다면 3번째는 금지
+  select count(*) into consec from (
+    select case when winner_id = p_winner_id then loser_id else winner_id end as opp
+    from match_history
+    where winner_id = p_winner_id or loser_id = p_winner_id
+    order by id desc limit 2
+  ) t where opp = p_loser_id;
+  if consec >= 2 then
+    raise exception '같은 친구와는 연속 2판까지만! 다른 친구와 한 판 두고 오세요.';
+  end if;
+
+  -- (#3) 패작 방지: 최근 3시간 내 같은 상대와의 대국 수 (많으면 보상 감소)
+  select count(*) into pair_recent from match_history
+  where played_at > now() - interval '3 hours'
+    and ((winner_id = p_winner_id and loser_id = p_loser_id)
+      or (winner_id = p_loser_id and loser_id = p_winner_id));
+
+  -- (#7) LP 변동: 동등 기준 승 +15 / 패 -10, 티어차 1당 ±5 (상·하위 대결 반영 #2)
+  diff      := tier_index(w.tier) - tier_index(l.tier);
+  win_gain  := greatest(8, least(30, 15 - 5 * diff));
+  lose_loss := greatest(5, least(25, 10 - 5 * diff));
+  -- (#2) 포인트: 이변(하위가 상위 이김)일수록 승자 포인트 증가
+  w_pts := 10 + win_gain;
+  l_pts := 5;
+  -- (#3) 같은 상대와 반복(3판째부터)이면 보상 대폭 감소 -> 패작 이득 제거
+  if pair_recent >= 2 then
+    win_gain := 3; lose_loss := 2; w_pts := 2; l_pts := 1;
+  end if;
 
   -- 승자: 승급 처리 (100 도달 시 승급, 초과분 이월. 다이아 최대 100)
   w_idx := tier_index(w.tier);
-  w_lp  := w.lp + change;
+  w_lp  := w.lp + win_gain;
   while w_lp >= 100 loop
     if w_idx < 4 then
       w_idx := w_idx + 1;
@@ -120,7 +163,7 @@ begin
 
   -- 패자: 강등 처리 (0 미만이면 강등, 브론즈 밑으로는 강등 없음)
   l_idx := tier_index(l.tier);
-  l_lp  := l.lp - change;
+  l_lp  := l.lp - lose_loss;
   if l_lp < 0 then
     if l_idx > 0 then
       l_idx := l_idx - 1;
@@ -132,24 +175,24 @@ begin
   new_l_tier := tier_name(l_idx);
 
   update students set tier = new_w_tier, lp = w_lp, wins = wins + 1,
-                     streak = w.streak + 1, points = points + 20 where id = w.id;
+                     streak = w.streak + 1, points = points + w_pts where id = w.id;
   update students set tier = new_l_tier, lp = l_lp, losses = losses + 1,
-                     streak = 0, points = points + 8 where id = l.id;
+                     streak = 0, points = points + l_pts where id = l.id;
 
   insert into match_history
     (winner_id, winner_name, loser_id, loser_name, winner_lp_change, loser_lp_change)
-  values (w.id, w.name, l.id, l.name, change, -change);
+  values (w.id, w.name, l.id, l.name, win_gain, -lose_loss);
 
   return json_build_object(
     'winner', json_build_object(
-      'id', w.id, 'name', w.name, 'lp_change', change,
+      'id', w.id, 'name', w.name, 'lp_change', win_gain,
       'old_tier', w.tier, 'new_tier', new_w_tier, 'new_lp', w_lp,
-      'streak', w.streak + 1, 'points_gain', 20,
+      'streak', w.streak + 1, 'points_gain', w_pts,
       'promoted', tier_index(new_w_tier) > tier_index(w.tier)),
     'loser', json_build_object(
-      'id', l.id, 'name', l.name, 'lp_change', -change,
+      'id', l.id, 'name', l.name, 'lp_change', -lose_loss,
       'old_tier', l.tier, 'new_tier', new_l_tier, 'new_lp', l_lp,
-      'points_gain', 8,
+      'points_gain', l_pts,
       'demoted', tier_index(new_l_tier) < tier_index(l.tier))
   );
 end;
