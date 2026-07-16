@@ -20,6 +20,7 @@ alter table students add column if not exists points int not null default 0;    
 alter table students add column if not exists owned jsonb not null default '[]'::jsonb;        -- 보유 스킨 id 목록
 alter table students add column if not exists equip_board text;                                -- 장착한 바둑판 스킨 id
 alter table students add column if not exists equip_stone text;                                -- 장착한 바둑알 스킨 id
+alter table students add column if not exists is_tester boolean not null default false;         -- 테스터 계정(경기 랭킹 미반영)
 
 -- ---------- 상점 아이템 카탈로그 (가격의 단일 소스) ----------
 create table if not exists shop_items (
@@ -116,6 +117,11 @@ begin
   select * into l from students where id = p_loser_id;
   if w.id is null or l.id is null then
     raise exception '학생을 찾을 수 없습니다.';
+  end if;
+
+  -- 테스터 계정이 낀 경기는 랭킹 미반영 (프론트에서 호출 안 하지만 안전장치)
+  if w.is_tester or l.is_tester then
+    raise exception '테스터 계정 경기는 랭킹에 반영되지 않습니다.';
   end if;
 
   -- (#1) 연속 리매치 제한: 승자의 최근 2경기가 모두 이 상대였다면 3번째는 금지
@@ -405,6 +411,13 @@ begin
   update app_config set value = md5(p_new) where key = 'admin_pw';
 end; $$;
 
+create or replace function admin_set_tester(p_admin_pw text, p_id bigint, p_val boolean)
+returns void language plpgsql security definer as $$
+begin
+  if not is_admin(p_admin_pw) then raise exception '관리자 비밀번호가 틀립니다.'; end if;
+  update students set is_tester = p_val where id = p_id;
+end; $$;
+
 -- 계정/관리자 함수 권한
 grant execute on function register_student(text, text)      to anon, authenticated;
 grant execute on function verify_student(bigint, text)      to anon, authenticated;
@@ -415,6 +428,7 @@ grant execute on function admin_delete_student(text, bigint)         to anon, au
 grant execute on function admin_reset_student_pw(text, bigint, text) to anon, authenticated;
 grant execute on function admin_reset_season(text)          to anon, authenticated;
 grant execute on function admin_set_password(text, text)    to anon, authenticated;
+grant execute on function admin_set_tester(text, bigint, boolean) to anon, authenticated;
 
 -- 등록은 register_student(비번 포함) 로만: 학생 테이블 직접 insert 정책 제거
 drop policy if exists "students insert" on students;

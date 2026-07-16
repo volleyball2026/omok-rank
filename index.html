@@ -106,7 +106,8 @@
     font-weight:800; font-size:15px; cursor:pointer; }
   .gt.active { background:var(--orange-deep); color:#fff; border-color:var(--orange-deep); }
   /* 체스판 */
-  #chessBoard { display:grid; grid-template-columns:repeat(8,1fr); width:min(90vmin,440px); aspect-ratio:1;
+  #chessBoard { display:grid; grid-template-columns:repeat(8,1fr); grid-template-rows:repeat(8,1fr);
+    width:min(90vmin,440px); aspect-ratio:1;
     border:5px solid #6b4423; border-radius:6px; box-shadow:var(--shadow); overflow:hidden; touch-action:manipulation; }
   .csq { display:flex; align-items:center; justify-content:center; font-size:min(8vmin,33px); line-height:1;
     cursor:pointer; user-select:none; position:relative; }
@@ -121,7 +122,8 @@
   /* 장기판 */
   #janggiArea { display:none; }
   #janggiArea.active { display:block; }
-  #janggiBoard { display:grid; grid-template-columns:repeat(9,1fr); width:min(94vmin,432px); aspect-ratio:9/10;
+  #janggiBoard { display:grid; grid-template-columns:repeat(9,1fr); grid-template-rows:repeat(10,1fr);
+    width:min(94vmin,432px); aspect-ratio:9/10;
     background:#e6c179; border:4px solid #6b4423; border-radius:6px; overflow:hidden; touch-action:manipulation; }
   .jsq { position:relative; display:flex; align-items:center; justify-content:center;
     border:0.5px solid rgba(107,68,35,0.45); cursor:pointer; }
@@ -151,6 +153,16 @@
   .rstone.bk { background:radial-gradient(circle at 35% 32%,#555,#111); }
   .rstone.wt { background:radial-gradient(circle at 35% 32%,#fff,#cfd3d8); border:1px solid #ccc; }
   #replayCount { pointer-events:none; }
+  /* 승격 선택창 */
+  .promo-picker { position:fixed; inset:0; background:rgba(60,43,31,0.55); z-index:120;
+    display:none; align-items:center; justify-content:center; flex-direction:column; }
+  .promo-picker.show { display:flex; }
+  .promo-title { color:#fff; font-weight:800; margin-bottom:14px; font-size:16px; }
+  .promo-opts { display:flex; gap:10px; background:#fff; padding:16px; border-radius:18px; box-shadow:var(--shadow); }
+  .promo-opts button { width:62px; height:80px; border:2px solid #f0e5d8; border-radius:12px; background:#fffdf9;
+    font-size:36px; color:#1c1c1c; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .promo-opts button span { font-size:12px; font-weight:800; color:var(--sub); margin-top:2px; }
+  .promo-opts button:active { background:#fff0dd; }
   .rotate-hint { text-align:center; font-size:12.5px; color:#8a6d1a; background:#fff3d6;
     border:1px solid #ffdd8f; border-radius:10px; padding:7px 10px; margin:0 0 10px; }
   .players { display:flex; gap:10px; margin-bottom:12px; }
@@ -225,6 +237,7 @@
   .tiny { border:1px solid #e5d8c8; background:#fffdf9; color:var(--sub); border-radius:8px; padding:4px 8px;
     font-size:11.5px; font-weight:700; cursor:pointer; margin-left:4px; }
   .tiny.danger { color:#e03131; border-color:#ffd0d0; }
+  .tiny.on { background:var(--orange); color:#fff; border-color:var(--orange); }
   .admin-fields { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:10px; }
   .admin-fields label { display:flex; flex-direction:column; font-size:11px; color:var(--sub); font-weight:700; gap:3px; margin:0; }
   .admin-fields input, .admin-fields select { padding:8px; font-size:14px; border:2px solid #f0e5d8; border-radius:9px;
@@ -297,16 +310,20 @@
   <!-- 오목 화면 -->
   <div id="playView">
     <div id="gameSetup">
+      <div class="gtype">
+        <button class="gt active" id="modeRanked" onclick="setMatchMode('ranked')">🏆 랭킹전</button>
+        <button class="gt" id="modeFriendly" onclick="setMatchMode('friendly')">🤝 친선전</button>
+      </div>
       <div class="row" style="display:flex;gap:10px;">
         <div style="flex:1">
-          <label style="font-size:13px;color:var(--sub);font-weight:600;">⚫ 흑돌 (선공)</label>
+          <label id="blackLabel" style="font-size:13px;color:var(--sub);font-weight:600;">⚫ 흑돌 (선공)</label>
           <select id="blackSel"></select>
-          <input id="blackPw" type="password" placeholder="흑돌 학생 비밀번호" style="margin-top:8px" />
+          <input id="blackPw" type="password" placeholder="비밀번호" style="margin-top:8px" />
         </div>
         <div style="flex:1">
-          <label style="font-size:13px;color:var(--sub);font-weight:600;">⚪ 백돌 (후공)</label>
+          <label id="whiteLabel" style="font-size:13px;color:var(--sub);font-weight:600;">⚪ 백돌 (후공)</label>
           <select id="whiteSel"></select>
-          <input id="whitePw" type="password" placeholder="백돌 학생 비밀번호" style="margin-top:8px" />
+          <input id="whitePw" type="password" placeholder="비밀번호" style="margin-top:8px" />
         </div>
       </div>
       <button class="btn btn-primary" id="startBtn" style="margin-top:14px" onclick="startGame()">🔒 확인하고 대국 시작!</button>
@@ -419,6 +436,16 @@
 <!-- 복기 -->
 <div class="modal-back" id="replayBack"><div class="modal" id="replayBody"></div></div>
 
+<div id="promoPicker" class="promo-picker">
+  <div class="promo-title">♟️ 승격할 기물을 고르세요</div>
+  <div class="promo-opts">
+    <button onclick="choosePromo('q')">♛<span>퀸</span></button>
+    <button onclick="choosePromo('r')">♜<span>룩</span></button>
+    <button onclick="choosePromo('b')">♝<span>비숍</span></button>
+    <button onclick="choosePromo('n')">♞<span>나이트</span></button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <!-- 라이브러리 -->
@@ -478,10 +505,12 @@ async function fetchStudents() {
   if (error) throw error;
   const list = data.map(s => ({ ...s }));
   list.sort((a,b) => tIdx(b.tier)-tIdx(a.tier) || b.lp-a.lp || b.wins-a.wins);
-  list.forEach((s,i) => {
+  let rank = 0;
+  list.forEach(s => {
     const g = s.wins + s.losses;
-    s.rank = i+1; s.games = g;
+    s.games = g;
     s.win_rate = g ? Math.round(s.wins/g*1000)/10 : 0;
+    s.rank = s.is_tester ? null : (++rank);   // 테스터는 랭킹에서 제외
   });
   return list;
 }
@@ -602,11 +631,12 @@ function nextTierText(s){
 }
 function renderList() {
   const el = document.getElementById("list");
-  if (!students.length) {
+  const ranked = students.filter(s => !s.is_tester);   // 테스터 제외
+  if (!ranked.length) {
     el.innerHTML = `<div class="empty">아직 등록된 학생이 없어요.<br>아래 <b>학생 등록</b>으로 시작해 보세요!</div>`;
     return;
   }
-  el.innerHTML = students.map(s => `
+  el.innerHTML = ranked.map(s => `
     <div class="card" onclick="openDetail(${s.id})">
       <div class="rank-badge rank-${s.rank<=3?s.rank:'n'}">${s.rank}</div>
       <div class="info">
@@ -620,13 +650,14 @@ function renderList() {
 }
 function fillSelects() {
   const byName = [...students].sort((a, b) => a.name.localeCompare(b.name, "ko"));  // 가나다 순
-  const opts = byName.map(s => `<option value="${s.id}">${esc(s.name)} (${s.tier} ${s.lp}LP)</option>`).join("");
+  const nm = s => (s.is_tester ? "🧪 " : "") + esc(s.name);
+  const opts = byName.map(s => `<option value="${s.id}">${nm(s)} (${s.tier} ${s.lp}LP)</option>`).join("");
   ["winnerSel","loserSel","blackSel","whiteSel"].forEach(id => {
     const sel = document.getElementById(id); const prev = sel.value;
     sel.innerHTML = opts; if (prev) sel.value = prev;
   });
   const shop = document.getElementById("shopWho"); const prevS = shop.value;
-  shop.innerHTML = byName.map(s => `<option value="${s.id}">${esc(s.name)} · 💰${s.points||0}P</option>`).join("");
+  shop.innerHTML = byName.map(s => `<option value="${s.id}">${nm(s)} · 💰${s.points||0}P</option>`).join("");
   if (prevS) shop.value = prevS;
 }
 
@@ -765,9 +796,10 @@ function adminCard(s) {
   const tierOpts = TIERS.map(t => `<option ${t===s.tier?'selected':''}>${t}</option>`).join("");
   const f = (lbl,id,v) => `<label>${lbl}<input id="${id}_${s.id}" type="number" value="${v}"></label>`;
   return `<div class="admin-card">
-    <div class="admin-name">${esc(s.name)}
+    <div class="admin-name">${esc(s.name)}${s.is_tester?' 🧪':''}
       <button class="tiny" onclick="adminRename(${s.id})">이름</button>
       <button class="tiny" onclick="adminResetPw(${s.id})">비번</button>
+      <button class="tiny ${s.is_tester?'on':''}" onclick="adminToggleTester(${s.id},${!s.is_tester})">${s.is_tester?'테스터✔':'테스터'}</button>
       <button class="tiny danger" onclick="adminDelete(${s.id})">삭제</button></div>
     <div class="admin-fields">
       <label>티어<select id="a_tier_${s.id}">${tierOpts}</select></label>
@@ -776,6 +808,12 @@ function adminCard(s) {
     </div>
     <button class="shop-btn equip" onclick="adminSave(${s.id})">저장</button>
   </div>`;
+}
+async function adminToggleTester(id, val){
+  try {
+    await adminRpc("admin_set_tester", { p_admin_pw: adminPw, p_id: id, p_val: val });
+    await loadStudents(); renderAdmin(); quickToast(val ? "🧪 테스터로 지정" : "테스터 해제됨");
+  } catch(e){ adminErr(e); }
 }
 const aval = id => document.getElementById(id).value;
 async function adminSave(id) {
@@ -993,7 +1031,10 @@ async function startGame() {
   const bId = +document.getElementById("blackSel").value;
   const wId = +document.getElementById("whiteSel").value;
   if(bId === wId){ alert("흑돌과 백돌은 다른 학생이어야 해요."); return; }
-  if(await pairBlocked(bId, wId)){ alert("같은 친구와는 연속 2판까지예요! 다른 친구와 한 판 두고 오세요. 🔄"); return; }
+  const blackS = students.find(s=>s.id===bId), whiteS = students.find(s=>s.id===wId);
+  const testerInvolved = blackS.is_tester || whiteS.is_tester;
+  gameRanked = matchMode === "ranked" && !testerInvolved;   // 테스터 끼면 무조건 친선(랭킹 미반영)
+  if(gameRanked && await pairBlocked(bId, wId)){ alert("같은 친구와는 연속 2판까지예요! 다른 친구와 한 판 두고 오세요. 🔄"); return; }
   const bPw = document.getElementById("blackPw").value;
   const wPw = document.getElementById("whitePw").value;
   if(!bPw || !wPw){ alert("두 학생 모두 비밀번호를 입력해야 합니다."); return; }
@@ -1019,7 +1060,7 @@ async function startGame() {
 
 function beginGame(black, white, boardOwner) {
   game = { board: Omok.createBoard(), turn: Omok.BLACK, over: false, history: [], black, white,
-           boardOwner, skins: resolveGameSkins(black, white, boardOwner) };
+           boardOwner, ranked: gameRanked, skins: resolveGameSkins(black, white, boardOwner) };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("gameArea").classList.add("active");
   document.getElementById("pnBlack").textContent = black.name;
@@ -1162,6 +1203,7 @@ async function endGame(color) {
   const loser  = color===Omok.BLACK ? game.white : game.black;
   saveGameRecord("omok", game.black, game.white, winner.id, "win", game.history.map(h => [h.r, h.c]));
   const msg = document.getElementById("gameMsg");
+  if(!game.ranked){ msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹·점수 미반영)`; return; }
   msg.textContent = `🎉 ${winner.name} 승리! 결과 기록 중…`;
   try {
     const r = await recordMatch(winner.id, loser.id);
@@ -1190,21 +1232,35 @@ function refitBoard(){ if(game){ sizeBoard(); draw(); } }
 window.addEventListener("resize", refitBoard);
 window.addEventListener("orientationchange", ()=> setTimeout(refitBoard, 250));
 
-// ==================== 체스 ====================
+// ==================== 게임 공통 ====================
 let gameType = "omok";
+let matchMode = "ranked";   // ranked | friendly
+let gameRanked = true;
+function setMatchMode(m){
+  matchMode = m;
+  document.getElementById("modeRanked").classList.toggle("active", m==="ranked");
+  document.getElementById("modeFriendly").classList.toggle("active", m==="friendly");
+}
 function setGameType(t){
   gameType = t;
-  const note = t==="chess" ? "♟️ 체스 · <b>백(白)이 먼저</b> 둡니다 · 두 학생 모두 비밀번호 입력"
-    : t==="janggi" ? "🏯 장기 · <b>백 칸=한(아래·선공), 흑 칸=초(위)</b> · 두 학생 모두 비밀번호 입력"
-    : "⚫ 오목(렌주룰) · <b>흑이 먼저</b> · 두 학생 모두 비밀번호 입력";
-  document.getElementById("setupNote").innerHTML = note;
+  const bl = document.getElementById("blackLabel"), wl = document.getElementById("whiteLabel");
+  if(t==="chess"){
+    wl.textContent = "⚪ 백 (선공·먼저 둠)"; bl.textContent = "⚫ 흑 (후공)";
+    document.getElementById("setupNote").innerHTML = "♟️ 체스 · <b>백(白)이 먼저</b> 둡니다 · 두 학생 모두 비밀번호 입력";
+  } else if(t==="janggi"){
+    wl.textContent = "🔴 한 (아래·선공)"; bl.textContent = "🟢 초 (위·후공)";
+    document.getElementById("setupNote").innerHTML = "🏯 장기 · <b>한(漢, 빨강·아래)이 먼저</b> · 두 학생 모두 비밀번호 입력";
+  } else {
+    wl.textContent = "⚪ 백돌 (후공)"; bl.textContent = "⚫ 흑돌 (선공)";
+    document.getElementById("setupNote").innerHTML = "⚫ 오목(렌주룰) · <b>흑이 먼저</b> · 두 학생 모두 비밀번호 입력";
+  }
 }
 
 let chessGame = null;
 const CG = { k:"♚", q:"♛", r:"♜", b:"♝", n:"♞", p:"♟" };
 
 function beginChess(white, black){
-  chessGame = { state: Chess.initialState(), white, black, sel:null, legal:[], over:false, moves:[] };
+  chessGame = { state: Chess.initialState(), white, black, sel:null, legal:[], over:false, moves:[], ranked: gameRanked };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("chessArea").classList.add("active");
   document.getElementById("cnWhite").textContent = white.name;
@@ -1240,18 +1296,30 @@ function renderChess(){
   }
 }
 
+let pendingPromo = null;
 function chessClick(r,c){
   if(!chessGame || chessGame.over) return;
   const st = chessGame.state, p = st.board[r][c];
-  if(chessGame.sel && chessGame.legal.some(m => m[0]===r && m[1]===c)){ doChessMove(chessGame.sel, [r,c]); return; }
+  if(chessGame.sel && chessGame.legal.some(m => m[0]===r && m[1]===c)){
+    if(Chess.isPromotion(st, chessGame.sel, [r,c])){      // 승격이면 기물 선택창
+      pendingPromo = { from: chessGame.sel, to: [r,c] };
+      chessGame.sel = null; chessGame.legal = []; renderChess();
+      document.getElementById("promoPicker").classList.add("show");
+      return;
+    }
+    doChessMove(chessGame.sel, [r,c]); return;
+  }
   if(p && Chess.colorOf(p)===st.turn){ chessGame.sel=[r,c]; chessGame.legal=Chess.legalMoves(st,r,c); renderChess(); }
   else { chessGame.sel=null; chessGame.legal=[]; renderChess(); }
 }
-
-function doChessMove(from, to){
+function choosePromo(pc){
+  document.getElementById("promoPicker").classList.remove("show");
+  if(pendingPromo){ const { from, to } = pendingPromo; pendingPromo = null; doChessMove(from, to, pc); }
+}
+function doChessMove(from, to, promo){
   const st = chessGame.state, mover = st.turn;
-  chessGame.moves.push([from[0], from[1], to[0], to[1]]);
-  chessGame.state = Chess.applyMove(st, from, to);   // 승격은 기본 퀸
+  chessGame.moves.push([from[0], from[1], to[0], to[1], promo]);
+  chessGame.state = Chess.applyMove(st, from, to, promo);   // promo 없으면 기본 퀸
   chessGame.sel = null; chessGame.legal = [];
   sfx.place();
   renderChess();
@@ -1270,6 +1338,7 @@ async function endChess(winnerColor){
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
   sfx.win(); confetti();
   const msg = document.getElementById("chessMsg");
+  if(!chessGame.ranked){ msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹 미반영)`; return; }
   msg.textContent = `🎉 ${winner.name} 승리! 기록 중…`;
   try {
     const r = await recordMatch(winner.id, loser.id);
@@ -1299,7 +1368,7 @@ let janggiGame = null;
 const JG = { r:{k:"漢",a:"士",c:"車",o:"包",h:"馬",e:"象",p:"兵"}, b:{k:"楚",a:"士",c:"車",o:"包",h:"馬",e:"象",p:"卒"} };
 
 function beginJanggi(red, blue){   // red=한(아래·선공), blue=초(위)
-  janggiGame = { state: Janggi.initialState(), red, blue, sel:null, legal:[], over:false, moves:[] };
+  janggiGame = { state: Janggi.initialState(), red, blue, sel:null, legal:[], over:false, moves:[], ranked: gameRanked };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("janggiArea").classList.add("active");
   document.getElementById("jnRed").textContent = red.name;
@@ -1356,6 +1425,7 @@ async function endJanggi(winnerColor){
   document.getElementById("jpRed").classList.remove("turn"); document.getElementById("jpBlue").classList.remove("turn");
   sfx.win(); confetti();
   const msg = document.getElementById("janggiMsg");
+  if(!janggiGame.ranked){ msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! (궁 포획) · 🤝 친선전 (랭킹 미반영)`; return; }
   msg.textContent = `🎉 ${winner.name} 승리! (궁 포획) 기록 중…`;
   try {
     const r = await recordMatch(winner.id, loser.id);
@@ -1429,7 +1499,7 @@ function replaySeek(i){ review.idx = i; renderReplay(); }
 
 function reconstructChess(moves, upto){
   let s = Chess.initialState();
-  for(let i=0;i<upto;i++){ const m = moves[i]; s = Chess.applyMove(s, [m[0],m[1]], [m[2],m[3]]); }
+  for(let i=0;i<upto;i++){ const m = moves[i]; s = Chess.applyMove(s, [m[0],m[1]], [m[2],m[3]], m[4]); }
   return s.board;
 }
 function reconstructJanggi(moves, upto){
@@ -1448,7 +1518,7 @@ function renderReplay(){
 function replayOmokHTML(moves, upto, last){
   const N = 15, b = Array.from({length:N},()=>Array(N).fill(0));
   for(let i=0;i<upto;i++){ const [r,c] = moves[i]; b[r][c] = i % 2 === 0 ? 1 : 2; }
-  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);aspect-ratio:1;width:min(84vmin,340px)">`;
+  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(84vmin,340px)">`;
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
     const isLast = last && last[0]===r && last[1]===c;
     const inner = b[r][c] ? `<span class="rstone ${b[r][c]===1?'bk':'wt'}"></span>` : "";
@@ -1458,7 +1528,7 @@ function replayOmokHTML(moves, upto, last){
 }
 function replayGridHTML(board, rows, cols, type, last){
   const w = "width:min(84vmin,340px)";
-  let h = `<div class="rgrid r${type}" style="grid-template-columns:repeat(${cols},1fr);aspect-ratio:${cols}/${rows};${w}">`;
+  let h = `<div class="rgrid r${type}" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);aspect-ratio:${cols}/${rows};${w}">`;
   for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
     const isLast = last && ((last[0]===r&&last[1]===c) || (last[2]===r&&last[3]===c));
     const p = board[r][c]; let extra = "", inner = "";

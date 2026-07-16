@@ -18,7 +18,7 @@
     for (let c = 0; c < 8; c++) { b[0][c] = "b" + back[c]; b[1][c] = "bp"; b[6][c] = "wp"; b[7][c] = "w" + back[c]; }
     return b;
   }
-  const initialState = () => ({ board: initialBoard(), turn: "w", castling: { wK: true, wQ: true, bK: true, bQ: true } });
+  const initialState = () => ({ board: initialBoard(), turn: "w", castling: { wK: true, wQ: true, bK: true, bQ: true }, ep: null });
 
   function kingPos(b, color) {
     for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) if (b[r][c] === color + "k") return [r, c];
@@ -49,14 +49,19 @@
   function inCheck(b, color) { const k = kingPos(b, color); return k ? isAttacked(b, k[0], k[1], opp(color)) : false; }
 
   // 유사합법 이동(왕 안전 미검사)
-  function pseudoMoves(b, r, c) {
+  function pseudoMoves(b, r, c, ep) {
     const p = b[r][c]; if (!p) return [];
     const color = colorOf(p), t = typeOf(p), moves = [];
     const add = (nr, nc) => { if (!inside(nr, nc)) return false; const q = b[nr][nc]; if (!q) { moves.push([nr, nc]); return true; } if (colorOf(q) !== color) moves.push([nr, nc]); return false; };
     if (t === "p") {
       const dir = color === "w" ? -1 : 1, start = color === "w" ? 6 : 1;
       if (inside(r + dir, c) && !b[r + dir][c]) { moves.push([r + dir, c]); if (r === start && !b[r + 2 * dir][c]) moves.push([r + 2 * dir, c]); }
-      for (const dc of [-1, 1]) { const nr = r + dir, nc = c + dc; if (inside(nr, nc) && b[nr][nc] && colorOf(b[nr][nc]) !== color) moves.push([nr, nc]); }
+      for (const dc of [-1, 1]) {
+        const nr = r + dir, nc = c + dc;
+        if (!inside(nr, nc)) continue;
+        const target = b[nr][nc];
+        if ((target && colorOf(target) !== color) || (ep && ep[0] === nr && ep[1] === nc)) moves.push([nr, nc]);  // 대각 잡기 + 앙파상
+      }
     } else if (t === "n") {
       for (const [dr, dc] of [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]]) add(r + dr, c + dc);
     } else if (t === "k") {
@@ -74,8 +79,10 @@
     const b = state.board, p = b[r][c];
     if (!p || colorOf(p) !== state.turn) return [];
     const color = colorOf(p), res = [];
-    for (const [nr, nc] of pseudoMoves(b, r, c)) {
+    for (const [nr, nc] of pseudoMoves(b, r, c, state.ep)) {
       const nb = clone(b); nb[nr][nc] = p; nb[r][c] = "";
+      // 앙파상: 잡힌 폰은 도착칸이 아니라 원래 행·도착 열에 있으므로 함께 제거
+      if (typeOf(p) === "p" && state.ep && nr === state.ep[0] && nc === state.ep[1] && !b[nr][nc]) nb[r][nc] = "";
       const k = kingPos(nb, color);
       if (!isAttacked(nb, k[0], k[1], opp(color))) res.push([nr, nc]);
     }
@@ -96,6 +103,8 @@
   function applyMove(state, from, to, promo) {
     const [fr, fc] = from, [tr, tc] = to;
     const b = clone(state.board), p = b[fr][fc], color = colorOf(p), t = typeOf(p);
+    // 앙파상 잡기: 도착칸이 비어있고 ep 대상이면 지나간 폰 제거
+    if (t === "p" && state.ep && tr === state.ep[0] && tc === state.ep[1] && !b[tr][tc]) b[fr][tc] = "";
     b[tr][tc] = p; b[fr][fc] = "";
     if (t === "k" && Math.abs(tc - fc) === 2) {           // 캐슬링: 룩도 이동
       if (tc === 6) { b[fr][5] = b[fr][7]; b[fr][7] = ""; }
@@ -109,7 +118,8 @@
       if (r === 0 && c === 0) cast.bQ = false; if (r === 0 && c === 7) cast.bK = false;
     };
     touch(fr, fc); touch(tr, tc);
-    return { board: b, turn: opp(color), castling: cast };
+    const ep = (t === "p" && Math.abs(tr - fr) === 2) ? [(fr + tr) / 2, fc] : null;   // 두 칸 전진 -> 앙파상 대상칸
+    return { board: b, turn: opp(color), castling: cast, ep };
   }
 
   function allLegalMoves(state, color) {
