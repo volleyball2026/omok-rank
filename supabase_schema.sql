@@ -468,3 +468,103 @@ drop policy if exists "gr read"   on game_records;
 drop policy if exists "gr insert" on game_records;
 create policy "gr read"   on game_records for select using (true);
 create policy "gr insert" on game_records for insert with check (true);
+
+-- ============================================================
+--  온라인 실시간 대국 (방 코드 방식) - 오목
+-- ============================================================
+create table if not exists online_games (
+  id bigint generated always as identity primary key,
+  code text unique not null,
+  game_type text not null default 'omok',
+  status text not null default 'waiting',      -- waiting | playing | done
+  host_id bigint, host_name text,              -- 방장 = 흑(선공)
+  guest_id bigint, guest_name text,            -- 게스트 = 백
+  moves jsonb not null default '[]'::jsonb,     -- [[r,c],...]
+  turn text not null default 'black',          -- black | white
+  winner_id bigint, result text,               -- win | resign | timeout
+  time_main int not null default 0, time_inc int not null default 0,
+  host_ms int, guest_ms int,
+  last_move_at timestamptz,
+  ranked boolean not null default true,
+  recorded boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table online_games enable row level security;
+drop policy if exists "og read" on online_games;
+create policy "og read" on online_games for select using (true);
+
+create or replace function og_create(p_code text, p_host_id bigint, p_host_name text, p_main int, p_inc int, p_ranked boolean)
+returns online_games language plpgsql security definer as $$
+declare g online_games;
+begin
+  insert into online_games(code, host_id, host_name, time_main, time_inc, ranked, host_ms, guest_ms)
+  values (p_code, p_host_id, p_host_name, p_main, p_inc, p_ranked,
+          case when p_main>0 then p_main*1000 end, case when p_main>0 then p_main*1000 end)
+  returning * into g;
+  return g;
+end; $$;
+
+create or replace function og_join(p_code text, p_guest_id bigint, p_guest_name text)
+returns online_games language plpgsql security definer as $$
+declare g online_games;
+begin
+  select * into g from online_games where code = p_code order by id desc limit 1;
+  if g.id is null then raise exception '방을 찾을 수 없어요. 코드를 확인하세요.'; end if;
+  if g.status <> 'waiting' then raise exception '이미 시작됐거나 끝난 방이에요.'; end if;
+  if g.host_id = p_guest_id then raise exception '자기 방에는 상대로 들어갈 수 없어요.'; end if;
+  update online_games set guest_id=p_guest_id, guest_name=p_guest_name, status='playing',
+    last_move_at=now(), updated_at=now() where id=g.id returning * into g;
+  return g;
+end; $$;
+
+create or replace function og_move(p_id bigint, p_player_id bigint, p_r int, p_c int,
+   p_end text, p_winner_id bigint, p_result text)
+returns online_games language plpgsql security definer as $$
+declare g online_games; cur bigint; elapsed int;
+begin
+  select * into g from online_games where id = p_id;
+  if g.id is null then raise exception '대국을 찾을 수 없어요.'; end if;
+  if g.status <> 'playing' then raise exception '진행 중인 대국이 아니에요.'; end if;
+  cur := case when g.turn='black' then g.host_id else g.guest_id end;
+  if p_player_id <> cur then raise exception '당신 차례가 아니에요.'; end if;
+  if g.time_main > 0 then
+    elapsed := (extract(epoch from (now() - coalesce(g.last_move_at, now())))*1000)::int;
+    if g.turn='black' then g.host_ms := greatest(0, g.host_ms - elapsed + g.time_inc*1000);
+    else g.guest_ms := greatest(0, g.guest_ms - elapsed + g.time_inc*1000); end if;
+  end if;
+  update online_games set
+    moves = moves || jsonb_build_array(jsonb_build_array(p_r, p_c)),
+    turn = case when g.turn='black' then 'white' else 'black' end,
+    host_ms = g.host_ms, guest_ms = g.guest_ms, last_move_at = now(), updated_at = now(),
+    status = coalesce(p_end, status), winner_id = coalesce(p_winner_id, winner_id),
+    result = coalesce(p_result, result)
+  where id = p_id returning * into g;
+  return g;
+end; $$;
+
+create or replace function og_finish(p_id bigint, p_winner_id bigint, p_result text)
+returns online_games language plpgsql security definer as $$
+declare g online_games;
+begin
+  update online_games set status='done', winner_id=p_winner_id, result=p_result, updated_at=now()
+  where id=p_id and status<>'done' returning * into g;
+  if g.id is null then select * into g from online_games where id=p_id; end if;
+  return g;
+end; $$;
+
+-- 결과 1회 기록 경쟁: true 반환한 클라이언트만 record_match 호출
+create or replace function og_claim_record(p_id bigint)
+returns boolean language plpgsql security definer as $$
+begin
+  update online_games set recorded=true where id=p_id and recorded=false;
+  return found;
+end; $$;
+
+grant execute on function og_create(text,bigint,text,int,int,boolean) to anon, authenticated;
+grant execute on function og_join(text,bigint,text)                   to anon, authenticated;
+grant execute on function og_move(bigint,bigint,int,int,text,bigint,text) to anon, authenticated;
+grant execute on function og_finish(bigint,bigint,text)               to anon, authenticated;
+grant execute on function og_claim_record(bigint)                     to anon, authenticated;
+
+do $$ begin alter publication supabase_realtime add table online_games; exception when others then null; end $$;

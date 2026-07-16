@@ -163,6 +163,13 @@
     font-size:36px; color:#1c1c1c; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; }
   .promo-opts button span { font-size:12px; font-weight:800; color:var(--sub); margin-top:2px; }
   .promo-opts button:active { background:#fff0dd; }
+  /* 온라인 대국 */
+  #onlineBody select, #onlineBody input { width:100%; padding:12px 14px; font-size:15px; border:2px solid #f0e5d8;
+    border-radius:12px; background:#fffdf9; -webkit-appearance:none; appearance:none; margin-bottom:4px; }
+  #onlineBody label { display:block; font-size:13px; color:var(--sub); margin:10px 0 6px; font-weight:600; }
+  .online-players { display:flex; gap:10px; margin-bottom:12px; }
+  .online-players .pl-card { flex:1; }
+  #olBoard .rgrid { touch-action:manipulation; }
   .rotate-hint { text-align:center; font-size:12.5px; color:#8a6d1a; background:#fff3d6;
     border:1px solid #ffdd8f; border-radius:10px; padding:7px 10px; margin:0 0 10px; }
   .players { display:flex; gap:10px; margin-bottom:12px; }
@@ -314,6 +321,7 @@
   <!-- 오목 화면 -->
   <div id="playView">
     <div id="gameSetup">
+      <button class="btn" id="onlineBtn" style="margin-bottom:12px;background:linear-gradient(135deg,#5b8dff,#37b3a6);color:#fff" onclick="openOnline()">🌐 온라인 대국 — 집에서 친구랑 실시간 (오목)</button>
       <div class="gtype">
         <button class="gt active" id="modeRanked" onclick="setMatchMode('ranked')">🏆 랭킹전</button>
         <button class="gt" id="modeFriendly" onclick="setMatchMode('friendly')">🤝 친선전</button>
@@ -445,6 +453,9 @@
 
 <!-- 복기 -->
 <div class="modal-back" id="replayBack"><div class="modal" id="replayBody"></div></div>
+
+<!-- 온라인 대국 -->
+<div class="modal-back" id="onlineBack"><div class="modal" id="onlineBody"></div></div>
 
 <div id="promoPicker" class="promo-picker">
   <div class="promo-title">♟️ 승격할 기물을 고르세요</div>
@@ -1302,6 +1313,7 @@ function clockRender(){
 }
 function setGameType(t){
   gameType = t;
+  document.getElementById("onlineBtn").style.display = t==="omok" ? "block" : "none";  // 온라인은 우선 오목만
   const bl = document.getElementById("blackLabel"), wl = document.getElementById("whiteLabel");
   if(t==="chess"){
     wl.textContent = "⚪ 백 (선공·먼저 둠)"; bl.textContent = "⚫ 흑 (후공)";
@@ -1607,6 +1619,235 @@ function replayGridHTML(board, rows, cols, type, last){
     h += `<div class="rsq ${extra}${isLast?' rlast':''}">${inner}</div>`;
   }
   return h + `</div>`;
+}
+
+// ==================== 온라인 실시간 대국 (오목) ====================
+let onlineMe = null; try { onlineMe = JSON.parse(localStorage.getItem("online_me") || "null"); } catch(e) {}
+let og = null, ogChannel = null, ogClockTimer = null;
+const $ob = () => document.getElementById("onlineBody");
+
+function saveMe(){ localStorage.setItem("online_me", JSON.stringify(onlineMe)); }
+function openOnline(){
+  if(needConfig()) return;
+  openModal("onlineBack");
+  if(!onlineMe){ renderOnlineLogin(); return; }
+  const resume = localStorage.getItem("og_active");
+  if(resume){ tryResume(+resume); } else renderOnlineHome();
+}
+async function tryResume(id){
+  try {
+    const { data } = await sb.from("online_games").select("*").eq("id", id).single();
+    if(data && data.status !== "done" && (data.host_id===onlineMe.id || data.guest_id===onlineMe.id)){
+      og = { id:data.id, code:data.code, role: data.host_id===onlineMe.id?"host":"guest",
+             myColor: data.host_id===onlineMe.id?Omok.BLACK:Omok.WHITE, row:data };
+      ogSubscribe(data.id);
+      if(data.status==="waiting") renderOnlineWaiting(data.code); else startOnlineBoard(data);
+      return;
+    }
+  } catch(e){}
+  localStorage.removeItem("og_active"); renderOnlineHome();
+}
+function renderOnlineLogin(){
+  const opts = [...students].sort((a,b)=>a.name.localeCompare(b.name,"ko")).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("");
+  $ob().innerHTML = `<span class="close-x" onclick="closeModal('onlineBack')">✕</span>
+    <h2>🌐 온라인 로그인</h2>
+    <div class="setup-note" style="margin:0 0 6px">내 계정으로 로그인하면 집에서 친구와 실시간으로 둘 수 있어요</div>
+    <label>이름</label><select id="olName">${opts}</select>
+    <label>비밀번호</label><input id="olPw" type="password" placeholder="내 비밀번호">
+    <button class="btn btn-primary" style="margin-top:14px" onclick="onlineLogin()">로그인</button>`;
+}
+async function onlineLogin(){
+  const id=+document.getElementById("olName").value, pw=document.getElementById("olPw").value;
+  if(!pw){ alert("비밀번호를 입력하세요."); return; }
+  try {
+    if(!(await verifyStudent(id,pw))){ alert("비밀번호가 틀립니다."); return; }
+    onlineMe = { id, name: students.find(s=>s.id===id).name }; saveMe(); renderOnlineHome();
+  } catch(e){ alert(e.message); }
+}
+function onlineLogout(){ onlineMe=null; localStorage.removeItem("online_me"); localStorage.removeItem("og_active"); renderOnlineLogin(); }
+function renderOnlineHome(){
+  $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
+    <h2>🌐 온라인 오목</h2>
+    <div class="setup-note" style="margin:0 0 12px">👤 <b>${esc(onlineMe.name)}</b> 님으로 로그인됨
+      <button class="tiny" onclick="onlineLogout()">로그아웃</button></div>
+    <button class="btn btn-primary" onclick="renderOnlineCreate()">➕ 방 만들기 (내가 ⚫흑·선공)</button>
+    <div style="height:10px"></div>
+    <button class="btn btn-ghost" onclick="renderOnlineJoin()">🔑 코드로 입장 (내가 ⚪백)</button>`;
+}
+function renderOnlineCreate(){
+  $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
+    <h2>➕ 방 만들기</h2>
+    <label>제한시간</label>
+    <select id="olTime"><option value="0,0">무제한</option><option value="600,0">10분</option><option value="300,0">5분</option><option value="180,2">3분+2초</option></select>
+    <label>방식</label>
+    <select id="olRanked"><option value="1">랭킹전</option><option value="0">친선전</option></select>
+    <button class="btn btn-primary" style="margin-top:14px" onclick="onlineCreate()">방 만들기</button>
+    <button class="mini-btn" style="margin-top:10px" onclick="renderOnlineHome()">← 뒤로</button>`;
+}
+async function onlineCreate(){
+  const [main,inc] = document.getElementById("olTime").value.split(",").map(Number);
+  const ranked = document.getElementById("olRanked").value==="1";
+  let row=null;
+  for(let i=0;i<6 && !row;i++){
+    const code = String(Math.floor(1000+Math.random()*9000));
+    const { data, error } = await sb.rpc("og_create",{p_code:code,p_host_id:onlineMe.id,p_host_name:onlineMe.name,p_main:main,p_inc:inc,p_ranked:ranked});
+    if(!error) row=data; else if(!/duplicate|unique/i.test(error.message)){ alert(error.message); return; }
+  }
+  if(!row){ alert("방 코드 생성 실패, 다시 시도하세요."); return; }
+  og = { id:row.id, code:row.code, role:"host", myColor:Omok.BLACK, row };
+  localStorage.setItem("og_active", row.id);
+  ogSubscribe(row.id); renderOnlineWaiting(row.code);
+}
+function renderOnlineWaiting(code){
+  $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
+    <h2>친구를 기다리는 중…</h2>
+    <div style="text-align:center;margin:18px 0">
+      <div style="font-size:14px;color:var(--sub)">이 코드를 친구에게 알려주세요 (카톡 등)</div>
+      <div style="font-size:46px;font-weight:900;letter-spacing:8px;color:var(--orange-deep);margin:10px 0">${code}</div>
+      <div class="setup-note">친구가 <b>코드로 입장</b>에 이 코드를 넣으면 시작돼요 🔵</div>
+    </div>
+    <button class="mini-btn danger" onclick="onlineLeave()">취소</button>`;
+}
+function renderOnlineJoin(){
+  $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
+    <h2>🔑 코드로 입장</h2>
+    <label>방 코드 (4자리)</label>
+    <input id="olCode" inputmode="numeric" maxlength="4" placeholder="1234" style="font-size:26px;letter-spacing:8px;text-align:center">
+    <button class="btn btn-primary" style="margin-top:14px" onclick="onlineJoin()">입장</button>
+    <button class="mini-btn" style="margin-top:10px" onclick="renderOnlineHome()">← 뒤로</button>`;
+}
+async function onlineJoin(){
+  const code = document.getElementById("olCode").value.trim();
+  if(code.length<4){ alert("4자리 코드를 입력하세요."); return; }
+  try {
+    const { data, error } = await sb.rpc("og_join",{p_code:code,p_guest_id:onlineMe.id,p_guest_name:onlineMe.name});
+    if(error) throw new Error(error.message);
+    og = { id:data.id, code:data.code, role:"guest", myColor:Omok.WHITE, row:data };
+    localStorage.setItem("og_active", data.id);
+    ogSubscribe(data.id); startOnlineBoard(data);
+  } catch(e){ alert(e.message); }
+}
+function ogSubscribe(id){
+  ogUnsub();
+  ogChannel = sb.channel("og-"+id)
+    .on("postgres_changes",{event:"UPDATE",schema:"public",table:"online_games",filter:"id=eq."+id}, p=>onOgUpdate(p.new))
+    .subscribe();
+}
+function ogUnsub(){ if(ogChannel){ sb.removeChannel(ogChannel); ogChannel=null; } if(ogClockTimer){ clearInterval(ogClockTimer); ogClockTimer=null; } }
+function onOgUpdate(row){
+  if(!og || row.id!==og.id) return;
+  og.row = row;
+  if(!document.getElementById("olBoard") && row.status!=="waiting") startOnlineBoard(row);
+  else renderOnlineBoard(row);
+  if(row.status==="done") onlineGameOver(row);
+}
+function startOnlineBoard(row){
+  og.row = row;
+  const oppName = og.role==="host" ? (row.guest_name||"상대") : row.host_name;
+  const meColor = og.myColor===Omok.BLACK?"⚫흑":"⚪백", oppColor = og.myColor===Omok.BLACK?"⚪백":"⚫흑";
+  $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
+    <div class="online-players">
+      <div class="pl-card"><div class="pn">${esc(onlineMe.name)} (${meColor})</div><div class="clk" id="olClkMe"></div></div>
+      <div class="pl-card"><div class="pn">${esc(oppName)} (${oppColor})</div><div class="clk" id="olClkOpp"></div></div>
+    </div>
+    <div class="board-wrap"><div id="olBoard"></div></div>
+    <div class="game-msg" id="olMsg"></div>
+    <div class="game-btns"><button class="btn btn-ghost" id="olResign" onclick="onlineResign()">🏳️ 기권</button></div>`;
+  renderOnlineBoard(row);
+  if(row.time_main>0 && !ogClockTimer) ogClockTimer = setInterval(updateOnlineClock, 250);
+}
+function ogBoardFromMoves(moves){
+  const b = Omok.createBoard();
+  moves.forEach((m,i)=> b[m[0]][m[1]] = i%2===0 ? Omok.BLACK : Omok.WHITE);
+  return b;
+}
+function renderOnlineBoard(row){
+  const el = document.getElementById("olBoard"); if(!el) return;
+  const N = Omok.N, b = ogBoardFromMoves(row.moves);
+  const last = row.moves.length ? row.moves[row.moves.length-1] : null;
+  const myTurn = row.status==="playing" && (row.turn==="black"?Omok.BLACK:Omok.WHITE)===og.myColor;
+  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,380px)">`;
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const isLast = last && last[0]===r && last[1]===c;
+    const inner = b[r][c] ? `<span class="rstone ${b[r][c]===1?'bk':'wt'}"></span>` : "";
+    h += `<div class="rsq${isLast?' rlast':''}" onclick="onlineClick(${r},${c})">${inner}</div>`;
+  }
+  el.innerHTML = h + `</div>`;
+  const msg = document.getElementById("olMsg");
+  if(msg && row.status==="playing") msg.textContent = myTurn ? "🟢 내 차례예요!" : "⏳ 상대가 두는 중…";
+  updateOnlineClock();
+}
+async function onlineClick(r,c){
+  const row = og && og.row;
+  if(!row || row.status!=="playing") return;
+  if((row.turn==="black"?Omok.BLACK:Omok.WHITE)!==og.myColor) return;   // 내 차례 아님
+  const b = ogBoardFromMoves(row.moves);
+  if(b[r][c]!==Omok.EMPTY) return;
+  const res = Omok.analyze(b, r, c, og.myColor);
+  if(og.myColor===Omok.BLACK && res.forbidden){ document.getElementById("olMsg").textContent = `❌ 금수: ${res.forbidden} — 다른 곳에`; return; }
+  let end=null, winner=null, result=null;
+  if(res.win){ end="done"; winner=onlineMe.id; result="win"; }
+  else { b[r][c]=og.myColor; if(Omok.isFull(b)){ end="done"; result="draw"; } }
+  try {
+    sfx.place();
+    const { data, error } = await sb.rpc("og_move",{p_id:og.id,p_player_id:onlineMe.id,p_r:r,p_c:c,p_end:end,p_winner_id:winner,p_result:result});
+    if(error) throw new Error(error.message);
+    og.row=data; renderOnlineBoard(data);
+    if(data.status==="done") onlineGameOver(data);
+  } catch(e){ document.getElementById("olMsg").textContent = e.message; }
+}
+async function onlineResign(){
+  const row = og && og.row;
+  if(!row || row.status!=="playing") return;
+  if(!confirm("기권할까요? 상대가 승리합니다.")) return;
+  const winner = og.role==="host" ? row.guest_id : row.host_id;
+  const { data } = await sb.rpc("og_finish",{p_id:og.id,p_winner_id:winner,p_result:"resign"});
+  if(data){ og.row=data; onlineGameOver(data); }
+}
+async function onlineGameOver(row){
+  if(ogClockTimer){ clearInterval(ogClockTimer); ogClockTimer=null; }
+  localStorage.removeItem("og_active");
+  const msg = document.getElementById("olMsg");
+  if(msg){
+    let txt;
+    if(row.result==="draw") txt="🤝 무승부!";
+    else { const iWon = row.winner_id===onlineMe.id; txt = (iWon?"🎉 승리!":"😢 패배") + (row.result==="resign"?" (기권)":row.result==="timeout"?" (시간패)":""); if(iWon) confetti(); }
+    msg.innerHTML = `<b>${txt}</b>`;
+  }
+  const rb = document.getElementById("olResign"); if(rb){ rb.textContent="나가기"; rb.onclick=onlineLeave; }
+  try {
+    const { data: claimed } = await sb.rpc("og_claim_record",{p_id:row.id});   // 결과·복기 1회만 기록
+    if(claimed){
+      if(row.result && row.result!=="draw" && row.winner_id && row.ranked){
+        const loser = row.winner_id===row.host_id ? row.guest_id : row.host_id;
+        try { await recordMatch(row.winner_id, loser); } catch(e){}   // 테스터·리매치 제한 시 조용히 스킵
+        loadStudents();
+      }
+      saveGameRecord("omok", {id:row.host_id,name:row.host_name}, {id:row.guest_id,name:row.guest_name},
+        row.result==="draw"?null:row.winner_id, row.result==="draw"?"draw":"win", row.moves);
+    }
+  } catch(e){}
+}
+function onlineLeave(){
+  og=null; ogUnsub(); localStorage.removeItem("og_active"); closeModal("onlineBack");
+}
+function updateOnlineClock(){
+  const row = og && og.row; if(!row || row.time_main<=0) return;
+  const meEl = document.getElementById("olClkMe"), oppEl = document.getElementById("olClkOpp"); if(!meEl) return;
+  const now = Date.now();
+  const lastAt = row.last_move_at ? new Date(row.last_move_at).getTime() : now;
+  const turnIsHost = row.turn==="black";
+  let hostMs = row.host_ms, guestMs = row.guest_ms;
+  if(row.status==="playing"){ if(turnIsHost) hostMs -= (now-lastAt); else guestMs -= (now-lastAt); }
+  const myMs = og.role==="host"?hostMs:guestMs, oppMs = og.role==="host"?guestMs:hostMs;
+  meEl.textContent = "⏱ "+fmtClock(Math.max(0,myMs)); oppEl.textContent = "⏱ "+fmtClock(Math.max(0,oppMs));
+  const myTurn = (turnIsHost===(og.role==="host")) && row.status==="playing";
+  meEl.classList.toggle("run", myTurn); oppEl.classList.toggle("run", !myTurn && row.status==="playing");
+  meEl.classList.toggle("low", myMs<=10000);
+  if(row.status==="playing" && (turnIsHost?hostMs:guestMs) <= 0){   // 시간패 -> 상대 승
+    const winner = turnIsHost ? row.guest_id : row.host_id;
+    sb.rpc("og_finish",{p_id:row.id,p_winner_id:winner,p_result:"timeout"});
+  }
 }
 
 renderTierGuide();
