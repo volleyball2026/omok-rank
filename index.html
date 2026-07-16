@@ -170,6 +170,10 @@
     border:3px solid transparent; }
   .pl-card.turn { border-color:var(--orange); }
   .pl-card .stone { font-size:20px; } .pl-card .pn { font-weight:800; font-size:15px; margin-top:2px; }
+  .clk { font-weight:800; font-size:17px; margin-top:3px; color:var(--sub); font-variant-numeric:tabular-nums; }
+  .clk:empty { display:none; }
+  .clk.run { color:var(--orange-deep); }
+  .clk.low { color:#e03131; }
   .board-wrap { display:flex; justify-content:center; }
   #board { background:var(--board); border-radius:12px; box-shadow:var(--shadow); touch-action:manipulation; }
   .game-msg { text-align:center; font-weight:700; margin:12px 0 4px; min-height:22px; color:var(--orange-deep); }
@@ -314,6 +318,12 @@
         <button class="gt active" id="modeRanked" onclick="setMatchMode('ranked')">🏆 랭킹전</button>
         <button class="gt" id="modeFriendly" onclick="setMatchMode('friendly')">🤝 친선전</button>
       </div>
+      <div class="gtype" style="margin-bottom:14px">
+        <button class="gt active" id="t_inf" onclick="setTime('inf')">⏱️ 무제한</button>
+        <button class="gt" id="t_10" onclick="setTime('10')">10분</button>
+        <button class="gt" id="t_5" onclick="setTime('5')">5분</button>
+        <button class="gt" id="t_3" onclick="setTime('3')">3분+2초</button>
+      </div>
       <div class="row" style="display:flex;gap:10px;">
         <div style="flex:1">
           <label id="blackLabel" style="font-size:13px;color:var(--sub);font-weight:600;">⚫ 흑돌 (선공)</label>
@@ -332,8 +342,8 @@
 
     <div id="gameArea">
       <div class="players">
-        <div class="pl-card" id="plBlack"><div class="stone">⚫</div><div class="pn" id="pnBlack">흑</div></div>
-        <div class="pl-card" id="plWhite"><div class="stone">⚪</div><div class="pn" id="pnWhite">백</div></div>
+        <div class="pl-card" id="plBlack"><div class="stone">⚫</div><div class="pn" id="pnBlack">흑</div><div class="clk" id="clkBlack"></div></div>
+        <div class="pl-card" id="plWhite"><div class="stone">⚪</div><div class="pn" id="pnWhite">백</div><div class="clk" id="clkWhite"></div></div>
       </div>
       <div class="rotate-hint">📱↔️ 태블릿을 <b>가로로</b> 돌리면 더 크게 볼 수 있어요</div>
       <div class="board-wrap"><canvas id="board"></canvas></div>
@@ -351,8 +361,8 @@
 
     <div id="chessArea">
       <div class="players">
-        <div class="pl-card" id="cpWhite"><div class="stone">♙</div><div class="pn" id="cnWhite">백</div></div>
-        <div class="pl-card" id="cpBlack"><div class="stone">♟️</div><div class="pn" id="cnBlack">흑</div></div>
+        <div class="pl-card" id="cpWhite"><div class="stone">♙</div><div class="pn" id="cnWhite">백</div><div class="clk" id="clkCW"></div></div>
+        <div class="pl-card" id="cpBlack"><div class="stone">♟️</div><div class="pn" id="cnBlack">흑</div><div class="clk" id="clkCB"></div></div>
       </div>
       <div class="board-wrap"><div id="chessBoard"></div></div>
       <div class="game-msg" id="chessMsg"></div>
@@ -365,8 +375,8 @@
 
     <div id="janggiArea">
       <div class="players">
-        <div class="pl-card" id="jpRed"><div class="stone">🔴</div><div class="pn" id="jnRed">한</div></div>
-        <div class="pl-card" id="jpBlue"><div class="stone">🟢</div><div class="pn" id="jnBlue">초</div></div>
+        <div class="pl-card" id="jpRed"><div class="stone">🔴</div><div class="pn" id="jnRed">한</div><div class="clk" id="clkJR"></div></div>
+        <div class="pl-card" id="jpBlue"><div class="stone">🟢</div><div class="pn" id="jnBlue">초</div><div class="clk" id="clkJB"></div></div>
       </div>
       <div class="board-wrap"><div id="janggiBoard"></div></div>
       <div class="game-msg" id="janggiMsg"></div>
@@ -1070,6 +1080,9 @@ function beginGame(black, white, boardOwner) {
   document.getElementById("optSound").checked = settings.sound;
   sizeBoard(); draw(); updateTurnUI();
   document.getElementById("gameMsg").textContent = "";
+  clockStart([Omok.BLACK, Omok.WHITE], Omok.BLACK, { [Omok.BLACK]:"clkBlack", [Omok.WHITE]:"clkWhite" },
+    (loser) => { quickToast(`⏱️ ${(loser===Omok.BLACK?game.black:game.white).name} 님 시간 초과!`);
+                 endGame(loser===Omok.BLACK?Omok.WHITE:Omok.BLACK); });
 }
 
 function replayGame() {
@@ -1089,6 +1102,7 @@ function toggleSound() {
 }
 
 function resetGame() {
+  clockStop();
   game = null; chessGame = null; janggiGame = null;
   document.getElementById("gameSetup").style.display = "block";
   document.getElementById("gameArea").classList.remove("active");
@@ -1179,6 +1193,7 @@ function tryMove(r,c) {
   game.turn = color===Omok.BLACK ? Omok.WHITE : Omok.BLACK;
   draw();   // 턴을 넘긴 뒤 그려야 금수 표시(흑 전용)가 백 차례에 남지 않음
   updateTurnUI();
+  clockSwitch(game.turn);
 }
 
 function undoMove() {
@@ -1186,7 +1201,7 @@ function undoMove() {
   const last = game.history.pop();
   game.board[last.r][last.c] = Omok.EMPTY;
   game.turn = game.turn===Omok.BLACK ? Omok.WHITE : Omok.BLACK;
-  draw(); updateTurnUI();
+  draw(); updateTurnUI(); clockSwitch(game.turn);
 }
 
 let msgTimer;
@@ -1196,7 +1211,7 @@ function flashMsg(text){
 }
 
 async function endGame(color) {
-  game.over = true; updateTurnUI(); draw();
+  game.over = true; clockStop(); updateTurnUI(); draw();
   sfx.win(); confetti();
   document.getElementById("replayBtn").style.display = "block";
   const winner = color===Omok.BLACK ? game.black : game.white;
@@ -1216,7 +1231,7 @@ async function endGame(color) {
 }
 
 function endDraw() {
-  game.over = true; updateTurnUI(); draw();
+  game.over = true; clockStop(); updateTurnUI(); draw();
   sfx.draw();
   document.getElementById("replayBtn").style.display = "block";
   saveGameRecord("omok", game.black, game.white, null, "draw", game.history.map(h => [h.r, h.c]));
@@ -1240,6 +1255,50 @@ function setMatchMode(m){
   matchMode = m;
   document.getElementById("modeRanked").classList.toggle("active", m==="ranked");
   document.getElementById("modeFriendly").classList.toggle("active", m==="friendly");
+}
+
+// ---------- 제한시간(체스 클럭) ----------
+const TIME_PRESETS = { inf:null, "10":{main:600,inc:0}, "5":{main:300,inc:0}, "3":{main:180,inc:2} };
+let timeControl = null;
+function setTime(key){
+  timeControl = TIME_PRESETS[key];
+  ["inf","10","5","3"].forEach(k => document.getElementById("t_"+k).classList.toggle("active", k===key));
+}
+let clk = null;
+function fmtClock(ms){ const s = Math.ceil(ms/1000); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); }
+function clockStart(sides, turnKey, elMap, onTimeout){
+  clockStop();
+  if(!timeControl){ sides.forEach(k => { const e=document.getElementById(elMap[k]); if(e) e.textContent=""; }); return; }
+  clk = { t:{}, inc:timeControl.inc*1000, running:turnKey, last:Date.now(), sides, elMap, onTimeout, dead:false };
+  sides.forEach(k => clk.t[k] = timeControl.main*1000);
+  clockRender(); requestAnimationFrame(clockLoop);
+}
+function clockSwitch(newKey){
+  if(!clk || clk.dead) return;
+  const now = Date.now();
+  clk.t[clk.running] = clk.t[clk.running] - (now - clk.last) + clk.inc;   // 피셔 증가(둔 사람에게 가산)
+  clk.last = now; clk.running = newKey; clockRender();
+}
+function clockStop(){ if(clk) clk.dead = true; clk = null; }
+function clockLoop(){
+  if(!clk || clk.dead) return;
+  const now = Date.now(), r = clk.running;
+  if(clk.t[r] - (now - clk.last) <= 0){
+    clk.t[r] = 0; clockRender();
+    const fn = clk.onTimeout, loser = r; clockStop(); fn(loser); return;   // 시간패 -> 상대 승
+  }
+  clockRender(); requestAnimationFrame(clockLoop);
+}
+function clockRender(){
+  if(!clk) return;
+  const now = Date.now();
+  clk.sides.forEach(k => {
+    const el = document.getElementById(clk.elMap[k]); if(!el) return;
+    let ms = clk.t[k]; if(k===clk.running && !clk.dead) ms -= (now - clk.last); ms = Math.max(0, ms);
+    el.textContent = "⏱ " + fmtClock(ms);
+    el.classList.toggle("run", k===clk.running && !clk.dead);
+    el.classList.toggle("low", ms <= 10000);
+  });
 }
 function setGameType(t){
   gameType = t;
@@ -1268,6 +1327,8 @@ function beginChess(white, black){
   document.getElementById("cReplayBtn").style.display = "none";
   document.getElementById("cResignBtn").disabled = false;
   renderChess();
+  clockStart(["w","b"], "w", { w:"clkCW", b:"clkCB" },
+    (loser) => { quickToast(`⏱️ ${(loser==="w"?chessGame.white:chessGame.black).name} 님 시간 초과!`); endChess(Chess.opp(loser)); });
 }
 function replayChess(){ if(chessGame) beginChess(chessGame.black, chessGame.white); }  // 색 교대
 
@@ -1326,10 +1387,11 @@ function doChessMove(from, to, promo){
   const stt = Chess.status(chessGame.state);
   if(stt === "checkmate"){ endChess(mover); return; }
   if(stt === "stalemate"){ chessDraw(); return; }
+  clockSwitch(chessGame.state.turn);
 }
 
 async function endChess(winnerColor){
-  chessGame.over = true;
+  chessGame.over = true; clockStop();
   const winner = winnerColor==="w" ? chessGame.white : chessGame.black;
   const loser  = winnerColor==="w" ? chessGame.black : chessGame.white;
   saveGameRecord("chess", chessGame.white, chessGame.black, winner.id, "win", chessGame.moves);
@@ -1347,7 +1409,7 @@ async function endChess(winnerColor){
   } catch(e){ msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
 }
 function chessDraw(){
-  chessGame.over = true;
+  chessGame.over = true; clockStop();
   document.getElementById("cResignBtn").disabled = true;
   document.getElementById("cReplayBtn").style.display = "block";
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
@@ -1376,6 +1438,8 @@ function beginJanggi(red, blue){   // red=한(아래·선공), blue=초(위)
   document.getElementById("jReplayBtn").style.display = "none";
   document.getElementById("jResignBtn").disabled = false;
   renderJanggi();
+  clockStart(["r","b"], "r", { r:"clkJR", b:"clkJB" },
+    (loser) => { quickToast(`⏱️ ${(loser==="r"?janggiGame.red:janggiGame.blue).name} 님 시간 초과!`); endJanggi(Janggi.opp(loser)); });
 }
 function replayJanggi(){ if(janggiGame) beginJanggi(janggiGame.blue, janggiGame.red); }
 
@@ -1413,10 +1477,11 @@ function doJanggiMove(from, to){
   const { state, captured } = Janggi.applyMove(st, from, to);
   janggiGame.state = state; janggiGame.sel=null; janggiGame.legal=[];
   sfx.place(); renderJanggi();
-  if(captured && Janggi.typ(captured)==="k") endJanggi(mover);   // 궁 포획 = 승리
+  if(captured && Janggi.typ(captured)==="k"){ endJanggi(mover); return; }   // 궁 포획 = 승리
+  clockSwitch(janggiGame.state.turn);
 }
 async function endJanggi(winnerColor){
-  janggiGame.over = true;
+  janggiGame.over = true; clockStop();
   const winner = winnerColor==="r" ? janggiGame.red : janggiGame.blue;
   const loser  = winnerColor==="r" ? janggiGame.blue : janggiGame.red;
   saveGameRecord("janggi", janggiGame.red, janggiGame.blue, winner.id, "win", janggiGame.moves);
