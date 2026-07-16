@@ -561,10 +561,14 @@ async function recordMatch(winnerId, loserId) {
   return data;
 }
 async function pairBlocked(aId, bId) {
-  // a의 최근 2경기가 모두 b 상대면 연속 2판 -> 3번째 금지
+  // a 또는 b가 낀 최근 2경기가 '모두 a-b 대결'이면 연속 2판 -> 3번째 금지.
+  // (둘 중 누구든 다른 학생과 한 판 두면, 그 경기가 최근 2경기에 들어와 풀림)
   const { data } = await sb.from("match_history").select("winner_id,loser_id")
-    .or(`winner_id.eq.${aId},loser_id.eq.${aId}`).order("id", { ascending: false }).limit(2);
-  return !!(data && data.length === 2 && data.every(m => m.winner_id === bId || m.loser_id === bId));
+    .or(`winner_id.eq.${aId},loser_id.eq.${aId},winner_id.eq.${bId},loser_id.eq.${bId}`)
+    .order("id", { ascending: false }).limit(2);
+  if(!data || data.length < 2) return false;
+  const isPair = m => (m.winner_id===aId && m.loser_id===bId) || (m.winner_id===bId && m.loser_id===aId);
+  return data.every(isPair);
 }
 async function saveGameRecord(gameType, p1, p2, winnerId, result, moves) {
   try {

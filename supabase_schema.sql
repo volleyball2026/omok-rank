@@ -124,13 +124,16 @@ begin
     raise exception '테스터 계정 경기는 랭킹에 반영되지 않습니다.';
   end if;
 
-  -- (#1) 연속 리매치 제한: 승자의 최근 2경기가 모두 이 상대였다면 3번째는 금지
+  -- (#1) 연속 리매치 제한: 두 학생 중 누구든 낀 최근 2경기가 '모두 이 두 사람 대결'이면 3번째 금지.
+  --      (둘 중 누구든 다른 학생과 한 판 두면 그 경기가 최근 2경기에 들어와 풀림)
   select count(*) into consec from (
-    select case when winner_id = p_winner_id then loser_id else winner_id end as opp
-    from match_history
+    select winner_id, loser_id from match_history
     where winner_id = p_winner_id or loser_id = p_winner_id
+       or winner_id = p_loser_id  or loser_id = p_loser_id
     order by id desc limit 2
-  ) t where opp = p_loser_id;
+  ) t
+  where (winner_id = p_winner_id and loser_id = p_loser_id)
+     or (winner_id = p_loser_id  and loser_id = p_winner_id);
   if consec >= 2 then
     raise exception '같은 친구와는 연속 2판까지만! 다른 친구와 한 판 두고 오세요.';
   end if;
