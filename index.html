@@ -406,6 +406,7 @@
         <button class="gt active" id="modeRanked" onclick="setMatchMode('ranked')">🏆 랭킹전</button>
         <button class="gt" id="modeFriendly" onclick="setMatchMode('friendly')">🤝 친선전</button>
       </div>
+      <div class="banner-warn" id="testerNote" style="display:none;margin:10px 0 0;padding:9px 12px;font-size:12.5px"></div>
       <div class="gtype" style="margin-bottom:14px">
         <button class="gt active" id="t_inf" onclick="setTime('inf')">⏱️ 무제한</button>
         <button class="gt" id="t_10" onclick="setTime('10')">10분</button>
@@ -872,7 +873,9 @@ function fillSelects() {
   ["winnerSel","loserSel","blackSel","whiteSel"].forEach(id => {
     const sel = document.getElementById(id); const prev = sel.value;
     sel.innerHTML = opts; if (prev) sel.value = prev;
+    if(id==="blackSel" || id==="whiteSel") sel.onchange = updateTesterNote;
   });
+  updateTesterNote();
 }
 
 // ---------- 탭 ----------
@@ -1291,6 +1294,7 @@ async function startGame() {
   const blackS = students.find(s=>s.id===bId), whiteS = students.find(s=>s.id===wId);
   const testerInvolved = blackS.is_tester || whiteS.is_tester;
   gameRanked = matchMode === "ranked" && !testerInvolved;   // 테스터 끼면 무조건 친선(랭킹 미반영)
+  gameTesterFriendly = matchMode === "ranked" && testerInvolved;   // 랭킹전을 골랐지만 테스터 때문에 친선이 된 경우
   if(gameRanked && await pairBlocked(bId, wId)){ alert("같은 친구와는 연속 2판까지예요! 다른 친구와 한 판 두고 오세요. 🔄"); return; }
   const bPw = document.getElementById("blackPw").value;
   const wPw = document.getElementById("whitePw").value;
@@ -1467,7 +1471,7 @@ async function endGame(color) {
   const msg = document.getElementById("gameMsg");
   if(!game.ranked){
     saveGameRecord("omok", game.black, game.white, winner.id, "win", moves, { ranked:false });
-    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹·점수 미반영)`; return;
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · ${friendlyWhy()}`; return;
   }
   msg.textContent = `🎉 ${winner.name} 승리! 결과 기록 중…`;
   try {
@@ -1502,11 +1506,40 @@ window.addEventListener("orientationchange", ()=> setTimeout(refitBoard, 250));
 // ==================== 게임 공통 ====================
 let gameType = "omok";
 let matchMode = "ranked";   // ranked | friendly
-let gameRanked = true;
+let gameRanked = true, gameTesterFriendly = false;
+// 친선전으로 끝났을 때 그 이유까지 알려준다 (랭킹전을 골랐는데 친선전이면 헷갈리니까)
+function friendlyWhy(){
+  return gameTesterFriendly
+    ? `🤝 친선전 — 🧪 테스터가 있어 랭킹·점수 미반영`
+    : `🤝 친선전 (랭킹·점수 미반영)`;
+}
 function setMatchMode(m){
   matchMode = m;
   document.getElementById("modeRanked").classList.toggle("active", m==="ranked");
   document.getElementById("modeFriendly").classList.toggle("active", m==="friendly");
+  updateTesterNote();
+}
+// 테스터가 끼면 랭킹전을 골라도 친선전이 된다 — 시작 전에 미리 알려준다
+function selectedTesters(){
+  const ids = ["blackSel","whiteSel"].map(id => {
+    const el = document.getElementById(id); return el ? +el.value : NaN;
+  });
+  return students.filter(s => s.is_tester && ids.includes(s.id));
+}
+// 받침 유무에 따라 조사를 골라준다 ("민준은" / "테스트가는")
+function josa(word, withB, withoutB){
+  const ch = String(word).charCodeAt(word.length-1);
+  if(ch >= 0xAC00 && ch <= 0xD7A3) return ((ch - 0xAC00) % 28) ? withB : withoutB;
+  return `${withB}(${withoutB})`;                 // 한글이 아니면 판단 불가
+}
+function updateTesterNote(){
+  const note = document.getElementById("testerNote"); if(!note) return;
+  const t = selectedTesters();
+  if(!t.length || matchMode !== "ranked"){ note.style.display = "none"; return; }
+  note.style.display = "block";
+  const names = t.map(s=>s.name).join(", ");
+  note.innerHTML = `🧪 <b>${esc(names)}</b>${josa(names,"은","는")} 테스터 계정이라
+    랭킹전을 골라도 <b>친선전으로 진행</b>돼요. (LP·티어·최근 경기 모두 친선전 처리)`;
 }
 
 // ---------- 제한시간(체스 클럭) ----------
@@ -1660,7 +1693,7 @@ async function endChess(winnerColor){
   const msg = document.getElementById("chessMsg");
   if(!chessGame.ranked){
     save({ ranked:false });
-    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹 미반영)`; return;
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · ${friendlyWhy()}`; return;
   }
   msg.textContent = `🎉 ${winner.name} 승리! 기록 중…`;
   try {
@@ -1754,7 +1787,7 @@ async function endJanggi(winnerColor){
   const msg = document.getElementById("janggiMsg");
   if(!janggiGame.ranked){
     save({ ranked:false });
-    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! (궁 포획) · 🤝 친선전 (랭킹 미반영)`; return;
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! (궁 포획) · ${friendlyWhy()}`; return;
   }
   msg.textContent = `🎉 ${winner.name} 승리! (궁 포획) 기록 중…`;
   try {
@@ -2265,7 +2298,12 @@ async function onlineGameOver(row){
     let txt;
     if(row.result==="draw") txt="🤝 무승부!";
     else { const iWon = row.winner_id===onlineMe.id; txt = (iWon?"🎉 승리!":"😢 패배") + (row.result==="resign"?" (기권)":row.result==="timeout"?" (시간패)":""); if(iWon) confetti(); }
-    msg.innerHTML = `<b>${txt}</b>`;
+    const tester = [row.host_id, row.guest_id].some(id => {
+      const s = students.find(x => x.id === id); return s && s.is_tester;
+    });
+    const mode = !row.ranked ? " · 🤝 친선전 (랭킹 미반영)"
+      : tester ? " · 🤝 친선전 — 🧪 테스터가 있어 랭킹 미반영" : " · 🏆 랭킹전";
+    msg.innerHTML = `<b>${txt}</b><span style="font-size:12px;color:var(--sub)">${mode}</span>`;
   }
   const rb = document.getElementById("olResign"); if(rb){ rb.textContent="나가기"; rb.onclick=onlineLeave; }
   updateRematchBtn(row);
@@ -2273,12 +2311,18 @@ async function onlineGameOver(row){
     const { data: claimed } = await sb.rpc("og_claim_record",{p_id:row.id});   // 결과·복기 1회만 기록
     if(claimed){
       let lp = null;
-      if(row.result && row.result!=="draw" && row.winner_id && row.ranked){
+      const isDraw = row.result==="draw" || !row.winner_id;
+      // 테스터가 끼면 서버가 record_match를 거부한다 → 로컬 대국과 똑같이 친선전으로 기록해야 표시가 정직하다
+      const testerInvolved = [row.host_id, row.guest_id].some(id => {
+        const s = students.find(x => x.id === id); return s && s.is_tester;
+      });
+      let rankedRec = !!row.ranked && !testerInvolved;
+      if(rankedRec && !isDraw){
         const loser = row.winner_id===row.host_id ? row.guest_id : row.host_id;
         try {
           const r = await recordMatch(row.winner_id, loser);
           lp = r.winner.lp_change;
-        } catch(e){}   // 테스터·리매치 제한 시 조용히 스킵
+        } catch(e){ rankedRec = false; }   // 리매치 제한 등으로 실제 반영이 안 됐으면 친선전으로 남긴다
         loadStudents();
       }
       // 복기 저장: p1 = 선공(오목:흑 / 체스:백)
@@ -2287,8 +2331,8 @@ async function onlineGameOver(row){
       const p1 = { id: hostFirst?row.host_id:row.guest_id, name: hostFirst?row.host_name:row.guest_name };
       const p2 = { id: hostFirst?row.guest_id:row.host_id, name: hostFirst?row.guest_name:row.host_name };
       saveGameRecord(row.game_type, p1, p2,
-        row.result==="draw"?null:row.winner_id, row.result==="draw"?"draw":"win", row.moves,
-        { ranked: !!row.ranked, online: true, lp });
+        isDraw?null:row.winner_id, isDraw?"draw":"win", row.moves,
+        { ranked: rankedRec, online: true, lp });
     }
   } catch(e){}
 }
