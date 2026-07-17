@@ -500,12 +500,15 @@ drop policy if exists "og read" on online_games;
 create policy "og read" on online_games for select using (true);
 
 drop function if exists og_create(text,bigint,text,int,int,boolean);
-create or replace function og_create(p_code text, p_host_id bigint, p_host_name text, p_main int, p_inc int, p_ranked boolean, p_host_color text)
+drop function if exists og_create(text,bigint,text,int,int,boolean,text);
+create or replace function og_create(p_code text, p_host_id bigint, p_host_name text, p_main int, p_inc int, p_ranked boolean, p_host_color text, p_game_type text)
 returns online_games language plpgsql security definer as $$
 declare g online_games;
 begin
-  insert into online_games(code, host_id, host_name, time_main, time_inc, ranked, host_color, host_ms, guest_ms)
+  insert into online_games(code, host_id, host_name, time_main, time_inc, ranked, host_color, game_type, turn, host_ms, guest_ms)
   values (p_code, p_host_id, p_host_name, p_main, p_inc, p_ranked, coalesce(p_host_color,'black'),
+          coalesce(p_game_type,'omok'),
+          case when p_game_type='chess' then 'white' else 'black' end,   -- 체스는 백 선공
           case when p_main>0 then p_main*1000 end, case when p_main>0 then p_main*1000 end)
   returning * into g;
   return g;
@@ -524,7 +527,8 @@ begin
   return g;
 end; $$;
 
-create or replace function og_move(p_id bigint, p_player_id bigint, p_r int, p_c int,
+drop function if exists og_move(bigint,bigint,int,int,text,bigint,text);
+create or replace function og_move(p_id bigint, p_player_id bigint, p_move jsonb,
    p_end text, p_winner_id bigint, p_result text)
 returns online_games language plpgsql security definer as $$
 declare g online_games; cur bigint; elapsed int; host_move boolean;
@@ -542,7 +546,7 @@ begin
     else g.guest_ms := greatest(0, g.guest_ms - elapsed + g.time_inc*1000); end if;
   end if;
   update online_games set
-    moves = moves || jsonb_build_array(jsonb_build_array(p_r, p_c)),
+    moves = moves || jsonb_build_array(p_move),   -- 오목 [r,c] / 체스 [fr,fc,tr,tc,promo]
     turn = case when g.turn='black' then 'white' else 'black' end,
     host_ms = g.host_ms, guest_ms = g.guest_ms, last_move_at = now(), updated_at = now(),
     status = coalesce(p_end, status), winner_id = coalesce(p_winner_id, winner_id),
@@ -579,7 +583,8 @@ begin
   if g.status <> 'done' then return g; end if;
   if g.rematch_offer is not null and g.rematch_offer <> p_player then   -- 상대가 이미 요청 -> 재시작
     update online_games set
-      moves='[]'::jsonb, turn='black', winner_id=null, result=null, status='playing',
+      moves='[]'::jsonb, winner_id=null, result=null, status='playing',
+      turn = case when g.game_type='chess' then 'white' else 'black' end,
       host_color = case when host_color='black' then 'white' else 'black' end,   -- 색 교대
       host_ms = case when time_main>0 then time_main*1000 end,
       guest_ms = case when time_main>0 then time_main*1000 end,
@@ -591,9 +596,9 @@ begin
   return g;
 end; $$;
 
-grant execute on function og_create(text,bigint,text,int,int,boolean,text) to anon, authenticated;
+grant execute on function og_create(text,bigint,text,int,int,boolean,text,text) to anon, authenticated;
 grant execute on function og_join(text,bigint,text)                   to anon, authenticated;
-grant execute on function og_move(bigint,bigint,int,int,text,bigint,text) to anon, authenticated;
+grant execute on function og_move(bigint,bigint,jsonb,text,bigint,text) to anon, authenticated;
 grant execute on function og_finish(bigint,bigint,text)               to anon, authenticated;
 grant execute on function og_claim_record(bigint)                     to anon, authenticated;
 grant execute on function og_rematch(bigint,bigint)                   to anon, authenticated;

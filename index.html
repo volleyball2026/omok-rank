@@ -144,6 +144,10 @@
   .rsq.light { background:#f0d9b5; } .rsq.dark { background:#b58863; }
   .rsq.palace { background:rgba(150,95,40,0.16); }
   .rsq.rlast { box-shadow:inset 0 0 0 3px #f7d84e; }
+  .rsq.sel { background:#f7ec6e !important; }
+  .rsq.chk { background:#ff8f8f !important; }
+  .rsq.legal::after { content:""; position:absolute; width:30%; height:30%; border-radius:50%; background:rgba(20,20,20,0.30); }
+  .rsq.legal.cap::after { width:86%; height:86%; background:transparent; border:4px solid rgba(20,20,20,0.30); border-radius:50%; }
   .rsq .rc { color:#fdfdfd; text-shadow:0 0 2px #000,0 1px 1px rgba(0,0,0,.7); }
   .rsq .rcb { color:#1c1c1c; text-shadow:0 0 1px rgba(255,255,255,.4); }
   .rdisk { width:84%; aspect-ratio:1; border-radius:50%; display:flex; align-items:center; justify-content:center;
@@ -1339,7 +1343,9 @@ function clockRender(){
 }
 function setGameType(t){
   gameType = t;
-  document.getElementById("onlineBtn").style.display = t==="omok" ? "block" : "none";  // 온라인은 우선 오목만
+  const ob = document.getElementById("onlineBtn");   // 온라인: 오목·체스 지원
+  ob.style.display = (t==="omok" || t==="chess") ? "block" : "none";
+  ob.textContent = `🌐 온라인 대국 — 집에서 친구랑 실시간 (${t==="chess"?"체스":"오목"})`;
   const bl = document.getElementById("blackLabel"), wl = document.getElementById("whiteLabel");
   if(t==="chess"){
     wl.textContent = "⚪ 백 (선공·먼저 둠)"; bl.textContent = "⚫ 흑 (후공)";
@@ -1413,7 +1419,10 @@ function chessClick(r,c){
 }
 function choosePromo(pc){
   document.getElementById("promoPicker").classList.remove("show");
-  if(pendingPromo){ const { from, to } = pendingPromo; pendingPromo = null; doChessMove(from, to, pc); }
+  if(!pendingPromo) return;
+  const { from, to, online } = pendingPromo; pendingPromo = null;
+  if(online) sendChessOnlineMove(from, to, pc);   // 온라인 체스
+  else doChessMove(from, to, pc);                 // 로컬 체스
 }
 function doChessMove(from, to, promo){
   const st = chessGame.state, mover = st.turn;
@@ -1692,11 +1701,14 @@ function replayGridHTML(board, rows, cols, type, last){
 // ==================== 온라인 실시간 대국 (오목) ====================
 let onlineMe = null; try { onlineMe = JSON.parse(localStorage.getItem("online_me") || "null"); } catch(e) {}
 let og = null, ogChannel = null, ogClockTimer = null;
+let onlineGameType = "omok";   // 현재 탭 기준 (omok | chess)
 const $ob = () => document.getElementById("onlineBody");
+const GT_LABEL = { omok:"오목", chess:"체스" };
 
 function saveMe(){ localStorage.setItem("online_me", JSON.stringify(onlineMe)); }
 function openOnline(){
   if(needConfig()) return;
+  onlineGameType = (gameType === "chess") ? "chess" : "omok";
   openModal("onlineBack");
   if(!onlineMe){ renderOnlineLogin(); return; }
   const resume = localStorage.getItem("og_active");
@@ -1735,18 +1747,23 @@ async function onlineLogin(){
 function onlineLogout(){ onlineMe=null; localStorage.removeItem("online_me"); localStorage.removeItem("og_active"); renderOnlineLogin(); }
 function renderOnlineHome(){
   $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
-    <h2>🌐 온라인 오목</h2>
+    <h2>🌐 온라인 ${GT_LABEL[onlineGameType]}</h2>
     <div class="setup-note" style="margin:0 0 12px">👤 <b>${esc(onlineMe.name)}</b> 님으로 로그인됨
       <button class="tiny" onclick="onlineLogout()">로그아웃</button></div>
-    <button class="btn btn-primary" onclick="renderOnlineCreate()">➕ 방 만들기 (내가 ⚫흑·선공)</button>
+    <button class="btn btn-primary" onclick="renderOnlineCreate()">➕ 방 만들기 (색 선택)</button>
     <div style="height:10px"></div>
-    <button class="btn btn-ghost" onclick="renderOnlineJoin()">🔑 코드로 입장 (내가 ⚪백)</button>`;
+    <button class="btn btn-ghost" onclick="renderOnlineJoin()">🔑 코드로 입장</button>
+    <div class="setup-note">입장은 오목·체스 방 모두 코드로 들어갈 수 있어요</div>`;
 }
 function renderOnlineCreate(){
+  const isChess = onlineGameType==="chess";
+  const colorOpts = isChess
+    ? `<option value="white">⚪ 백 (선공·먼저)</option><option value="black">⚫ 흑 (후공)</option><option value="random">🎲 랜덤</option>`
+    : `<option value="black">⚫ 흑 (선공·먼저)</option><option value="white">⚪ 백 (후공)</option><option value="random">🎲 랜덤</option>`;
   $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
-    <h2>➕ 방 만들기</h2>
-    <label>내 돌 (선/후 선택)</label>
-    <select id="olColor"><option value="black">⚫ 흑 (선공·먼저)</option><option value="white">⚪ 백 (후공)</option><option value="random">🎲 랜덤</option></select>
+    <h2>➕ ${GT_LABEL[onlineGameType]} 방 만들기</h2>
+    <label>내 돌/기물 (선·후 선택)</label>
+    <select id="olColor">${colorOpts}</select>
     <label>제한시간</label>
     <select id="olTime"><option value="0,0">무제한</option><option value="600,0">10분</option><option value="300,0">5분</option><option value="180,2">3분+2초</option></select>
     <label>방식</label>
@@ -1754,10 +1771,15 @@ function renderOnlineCreate(){
     <button class="btn btn-primary" style="margin-top:14px" onclick="onlineCreate()">방 만들기</button>
     <button class="mini-btn" style="margin-top:10px" onclick="renderOnlineHome()">← 뒤로</button>`;
 }
-function myOnlineColor(row){
-  const hostColor = row.host_color==="white" ? Omok.WHITE : Omok.BLACK;
-  const iAmHost = row.host_id===onlineMe.id;
-  return iAmHost ? hostColor : (hostColor===Omok.BLACK?Omok.WHITE:Omok.BLACK);
+function myOnlineSide(row){   // 'black' | 'white' (게임 공통)
+  const hc = row.host_color==="white" ? "white" : "black";
+  return row.host_id===onlineMe.id ? hc : (hc==="black" ? "white" : "black");
+}
+function myOnlineColor(row){ return myOnlineSide(row)==="black" ? Omok.BLACK : Omok.WHITE; }  // 오목용
+function onlineChessState(row){   // 수순으로 체스 상태 복원
+  let s = Chess.initialState();
+  row.moves.forEach(m => { s = Chess.applyMove(s, [m[0],m[1]], [m[2],m[3]], m[4]); });
+  return s;
 }
 async function onlineCreate(){
   const [main,inc] = document.getElementById("olTime").value.split(",").map(Number);
@@ -1767,7 +1789,7 @@ async function onlineCreate(){
   let row=null;
   for(let i=0;i<6 && !row;i++){
     const code = String(Math.floor(1000+Math.random()*9000));
-    const { data, error } = await sb.rpc("og_create",{p_code:code,p_host_id:onlineMe.id,p_host_name:onlineMe.name,p_main:main,p_inc:inc,p_ranked:ranked,p_host_color:color});
+    const { data, error } = await sb.rpc("og_create",{p_code:code,p_host_id:onlineMe.id,p_host_name:onlineMe.name,p_main:main,p_inc:inc,p_ranked:ranked,p_host_color:color,p_game_type:onlineGameType});
     if(!error) row=data; else if(!/duplicate|unique/i.test(error.message)){ alert(error.message); return; }
   }
   if(!row){ alert("방 코드 생성 실패, 다시 시도하세요."); return; }
@@ -1830,10 +1852,11 @@ function onOgUpdate(row){
   }
 }
 function startOnlineBoard(row){
-  og.row = row; og.myColor = myOnlineColor(row);
+  og.row = row; og.myColor = myOnlineColor(row); og.sel = null; og.legal = [];
   localStorage.setItem("og_active", row.id);
   const oppName = og.role==="host" ? (row.guest_name||"상대") : row.host_name;
-  const meColor = og.myColor===Omok.BLACK?"⚫흑":"⚪백", oppColor = og.myColor===Omok.BLACK?"⚪백":"⚫흑";
+  const mySide = myOnlineSide(row);
+  const meColor = mySide==="black"?"⚫흑":"⚪백", oppColor = mySide==="black"?"⚪백":"⚫흑";
   $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
     <div class="online-players">
       <div class="pl-card"><div class="pn">${esc(onlineMe.name)} (${meColor})</div><div class="clk" id="olClkMe"></div></div>
@@ -1865,6 +1888,7 @@ function stoneStyle(st){
   return `background:radial-gradient(circle at 35% 32%, ${st.in}, ${st.out});` + (st.glow?`box-shadow:0 0 6px ${st.glow};`:"border:1px solid rgba(0,0,0,.15);");
 }
 function renderOnlineBoard(row){
+  if(row.game_type === "chess") return renderOnlineChessBoard(row);
   const el = document.getElementById("olBoard"); if(!el) return;
   const N = Omok.N, b = ogBoardFromMoves(row.moves);
   const last = row.moves.length ? row.moves[row.moves.length-1] : null;
@@ -1900,11 +1924,77 @@ async function onlineClick(r,c){
   else { b[r][c]=og.myColor; if(Omok.isFull(b)){ end="done"; result="draw"; } }
   try {
     sfx.place();
-    const { data, error } = await sb.rpc("og_move",{p_id:og.id,p_player_id:onlineMe.id,p_r:r,p_c:c,p_end:end,p_winner_id:winner,p_result:result});
+    const { data, error } = await sb.rpc("og_move",{p_id:og.id,p_player_id:onlineMe.id,p_move:[r,c],p_end:end,p_winner_id:winner,p_result:result});
     if(error) throw new Error(error.message);
     og.row=data; renderOnlineBoard(data);
     if(data.status==="done") onlineGameOver(data);
   } catch(e){ document.getElementById("olMsg").textContent = e.message; }
+}
+// ---- 온라인 체스 ----
+function renderOnlineChessBoard(row){
+  const el = document.getElementById("olBoard"); if(!el) return;
+  const st = onlineChessState(row);
+  const myC = myOnlineSide(row)==="white" ? "w" : "b";
+  const myTurn = row.status==="playing" && st.turn===myC;
+  const legalSet = new Set((og.legal||[]).map(m=>m[0]+","+m[1]));
+  const last = row.moves.length ? row.moves[row.moves.length-1] : null;
+  const chk = row.status==="playing" && Chess.inCheck(st.board, st.turn) ? Chess.kingPos(st.board, st.turn) : null;
+  let h = `<div class="rgrid rchess" style="grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);aspect-ratio:1;width:min(88vmin,380px)">`;
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p = st.board[r][c];
+    let cls = "rsq " + ((r+c)%2 ? "dark":"light");
+    if(og.sel && og.sel[0]===r && og.sel[1]===c) cls += " sel";
+    if(legalSet.has(r+","+c)) cls += " legal" + (p ? " cap" : "");
+    if(last && ((last[0]===r&&last[1]===c)||(last[2]===r&&last[3]===c))) cls += " rlast";
+    if(chk && chk[0]===r && chk[1]===c) cls += " chk";
+    const inner = p ? `<span class="${Chess.colorOf(p)==='w'?'rc':'rcb'}">${CG[Chess.typeOf(p)]}</span>` : "";
+    h += `<div class="${cls}" onclick="chessOnlineClick(${r},${c})">${inner}</div>`;
+  }
+  el.innerHTML = h + `</div>`;
+  const msg = document.getElementById("olMsg");
+  if(msg && row.status==="playing"){
+    const chkTxt = Chess.inCheck(st.board, st.turn) ? " · ⚠️ 장군!" : "";
+    msg.textContent = (myTurn ? "🟢 내 차례예요!" : "⏳ 상대가 두는 중…") + chkTxt;
+  }
+  updateOnlineClock();
+}
+function chessOnlineClick(r,c){
+  const row = og && og.row;
+  if(!row || row.status!=="playing" || row.game_type!=="chess") return;
+  const st = onlineChessState(row);
+  const myC = myOnlineSide(row)==="white" ? "w" : "b";
+  if(st.turn !== myC) return;                       // 내 차례 아님
+  if(og.sel && (og.legal||[]).some(m=>m[0]===r && m[1]===c)){
+    const from = og.sel, to = [r,c];
+    if(Chess.isPromotion(st, from, to)){            // 승격 선택
+      pendingPromo = { from, to, online:true };
+      og.sel=null; og.legal=[]; renderOnlineBoard(row);
+      document.getElementById("promoPicker").classList.add("show");
+      return;
+    }
+    sendChessOnlineMove(from, to, null); return;
+  }
+  const p = st.board[r][c];
+  if(p && Chess.colorOf(p)===myC){ og.sel=[r,c]; og.legal=Chess.legalMoves(st,r,c); }
+  else { og.sel=null; og.legal=[]; }
+  renderOnlineBoard(row);
+}
+async function sendChessOnlineMove(from, to, promo){
+  const row = og.row, st = onlineChessState(row);
+  const next = Chess.applyMove(st, from, to, promo);
+  const stt = Chess.status(next);
+  let end=null, winner=null, result=null;
+  if(stt==="checkmate"){ end="done"; winner=onlineMe.id; result="win"; }
+  else if(stt==="stalemate"){ end="done"; result="draw"; }
+  og.sel=null; og.legal=[];
+  try {
+    sfx.place();
+    const { data, error } = await sb.rpc("og_move",{p_id:og.id,p_player_id:onlineMe.id,
+      p_move:[from[0],from[1],to[0],to[1],promo||null], p_end:end, p_winner_id:winner, p_result:result});
+    if(error) throw new Error(error.message);
+    og.row=data; renderOnlineBoard(data);
+    if(data.status==="done") onlineGameOver(data);
+  } catch(e){ const m=document.getElementById("olMsg"); if(m) m.textContent=e.message; }
 }
 async function onlineResign(){
   const row = og && og.row;
@@ -1933,7 +2023,12 @@ async function onlineGameOver(row){
         try { await recordMatch(row.winner_id, loser); } catch(e){}   // 테스터·리매치 제한 시 조용히 스킵
         loadStudents();
       }
-      saveGameRecord("omok", {id:row.host_id,name:row.host_name}, {id:row.guest_id,name:row.guest_name},
+      // 복기 저장: p1 = 선공(오목:흑 / 체스:백)
+      const firstSide = row.game_type==="chess" ? "white" : "black";
+      const hostFirst = row.host_color===firstSide;
+      const p1 = { id: hostFirst?row.host_id:row.guest_id, name: hostFirst?row.host_name:row.guest_name };
+      const p2 = { id: hostFirst?row.guest_id:row.host_id, name: hostFirst?row.guest_name:row.host_name };
+      saveGameRecord(row.game_type, p1, p2,
         row.result==="draw"?null:row.winner_id, row.result==="draw"?"draw":"win", row.moves);
     }
   } catch(e){}
