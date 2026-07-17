@@ -21,6 +21,8 @@ alter table students add column if not exists owned jsonb not null default '[]':
 alter table students add column if not exists equip_board text;                                -- 장착한 바둑판 스킨 id
 alter table students add column if not exists equip_stone text;                                -- 장착한 바둑알 스킨 id
 alter table students add column if not exists is_tester boolean not null default false;         -- 테스터 계정(경기 랭킹 미반영)
+alter table students add column if not exists last_attend date;                                 -- 마지막 출석일(KST)
+alter table students add column if not exists attend_streak int not null default 0;             -- 연속 출석일
 
 -- ---------- 상점 아이템 카탈로그 (가격의 단일 소스) ----------
 create table if not exists shop_items (
@@ -246,6 +248,24 @@ begin
   update students set tier = '브론즈', lp = 0, wins = 0, losses = 0, streak = 0;
 end;
 $$;
+
+-- ---------- 출석체크(하루 1회 포인트) ----------
+create or replace function attend(p_id bigint)
+returns json language plpgsql security definer as $$
+declare s students; today date; gained int; newstreak int;
+begin
+  today := (now() at time zone 'Asia/Seoul')::date;      -- 한국 날짜 기준
+  select * into s from students where id = p_id;
+  if s.id is null then raise exception '학생을 찾을 수 없습니다.'; end if;
+  if s.last_attend = today then
+    return json_build_object('already', true, 'points', s.points, 'streak', s.attend_streak);
+  end if;
+  if s.last_attend = today - 1 then newstreak := s.attend_streak + 1; else newstreak := 1; end if;
+  gained := 15 + least(newstreak, 7) * 2;               -- 기본 15P + 연속 보너스(최대 +14)
+  update students set points = points + gained, last_attend = today, attend_streak = newstreak where id = p_id;
+  return json_build_object('already', false, 'gained', gained, 'points', s.points + gained, 'streak', newstreak);
+end; $$;
+grant execute on function attend(bigint) to anon, authenticated;
 
 -- ---------- 상점: 구매 / 장착 ----------
 -- 구매: 가격은 서버(shop_items)에서 조회 -> 클라이언트가 가격을 조작할 수 없음

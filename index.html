@@ -286,6 +286,9 @@
     background:#fffdf9; -webkit-appearance:none; appearance:none; font-weight:700; }
   .pts-badge { flex:none; background:linear-gradient(135deg,#ffd24d,#ffb300); color:#7a4d00; font-weight:800;
     padding:11px 14px; border-radius:12px; font-size:15px; box-shadow:var(--shadow); white-space:nowrap; }
+  .attend-box { display:flex; align-items:center; gap:10px; background:#fff; border-radius:16px; box-shadow:var(--shadow);
+    padding:12px 14px; margin-bottom:6px; }
+  .attend-box > div:first-child { flex:1; }
   .shop-sec-title { font-size:15px; font-weight:800; margin:16px 4px 10px; }
   .shop-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; }
   .shop-item { background:#fff; border-radius:16px; box-shadow:var(--shadow); padding:12px; text-align:center;
@@ -420,12 +423,12 @@
 
   <!-- 상점 화면 -->
   <div id="shopView">
-    <div class="shop-head">
-      <select id="shopWho" onchange="renderShop()"></select>
+    <div class="shop-head" id="shopHead" style="display:none">
+      <div style="flex:1;font-weight:800;font-size:15px" id="shopWhoName"></div>
       <div class="pts-badge">💰 <span id="shopPts">0</span> P</div>
     </div>
     <div id="shopBody"></div>
-    <div class="setup-note">경기하면 포인트가 쌓여요 · 승리 +20P · 참가 +8P</div>
+    <div class="setup-note">포인트 모으기 · 승리 +25P · 참가 +5P · 🎁 출석체크 +15P~</div>
   </div>
 </div>
 
@@ -706,9 +709,6 @@ function fillSelects() {
     const sel = document.getElementById(id); const prev = sel.value;
     sel.innerHTML = opts; if (prev) sel.value = prev;
   });
-  const shop = document.getElementById("shopWho"); const prevS = shop.value;
-  shop.innerHTML = byName.map(s => `<option value="${s.id}">${nm(s)} · 💰${s.points||0}P</option>`).join("");
-  if (prevS) shop.value = prevS;
 }
 
 // ---------- 탭 ----------
@@ -940,17 +940,59 @@ function stonePrevStyle(data, side) {
 function isDefaultItem(it) { return it.id === "board_wood" || it.id === "stone_ink"; }
 
 function renderShop() {
-  const body = document.getElementById("shopBody");
-  if (!configured) { body.innerHTML = `<div class="banner-warn">먼저 Supabase 설정을 완료해 주세요.</div>`; return; }
-  if (!students.length) { body.innerHTML = `<div class="empty">먼저 랭킹 탭에서 학생을 등록해 주세요.</div>`; return; }
-  const sid = +document.getElementById("shopWho").value || students[0].id;
-  const s = students.find(x => x.id === sid) || students[0];
+  const body = document.getElementById("shopBody"), head = document.getElementById("shopHead");
+  if (!configured) { head.style.display="none"; body.innerHTML = `<div class="banner-warn">먼저 Supabase 설정을 완료해 주세요.</div>`; return; }
+  if (!students.length) { head.style.display="none"; body.innerHTML = `<div class="empty">먼저 랭킹 탭에서 학생을 등록해 주세요.</div>`; return; }
+  // 🔒 본인 로그인해야 상점 사용 가능 (남의 이름으로 구매 방지)
+  if (!onlineMe) {
+    head.style.display = "none";
+    const opts = [...students].sort((a,b)=>a.name.localeCompare(b.name,"ko")).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("");
+    body.innerHTML = `<div class="banner-warn">🔒 상점은 <b>본인 확인</b> 후 이용할 수 있어요. 내 이름과 비밀번호로 로그인하세요.</div>
+      <label style="display:block;font-size:13px;color:var(--sub);margin:10px 0 6px;font-weight:600">이름</label>
+      <select id="shopName" style="width:100%;padding:12px 14px;font-size:15px;border:2px solid #f0e5d8;border-radius:12px;background:#fffdf9;-webkit-appearance:none;appearance:none">${opts}</select>
+      <label style="display:block;font-size:13px;color:var(--sub);margin:10px 0 6px;font-weight:600">비밀번호</label>
+      <input id="shopPw" type="password" placeholder="내 비밀번호" style="width:100%;padding:12px 14px;font-size:15px;border:2px solid #f0e5d8;border-radius:12px;background:#fffdf9" onkeydown="if(event.key==='Enter')shopLogin()">
+      <button class="btn btn-primary" style="margin-top:14px" onclick="shopLogin()">로그인</button>`;
+    return;
+  }
+  const s = students.find(x => x.id === onlineMe.id);
+  if (!s) { onlineMe=null; localStorage.removeItem("online_me"); renderShop(); return; }
+  head.style.display = "flex";
+  document.getElementById("shopWhoName").innerHTML = `👤 ${esc(s.name)} <button class="tiny" onclick="shopLogout()">로그아웃</button>`;
   document.getElementById("shopPts").textContent = s.points || 0;
   const owned = new Set(s.owned || []);
   const items = Object.values(SHOP).sort((a, b) => a.sort - b.sort);
-  body.innerHTML =
+  body.innerHTML = attendHtml(s) +
     shopSection("🎋 바둑판", items.filter(i => i.kind === "board"), s, owned) +
     shopSection("⚫ 바둑알", items.filter(i => i.kind === "stone"), s, owned);
+}
+async function shopLogin(){
+  const id = +document.getElementById("shopName").value, pw = document.getElementById("shopPw").value;
+  if(!pw){ alert("비밀번호를 입력하세요."); return; }
+  try {
+    if(!(await verifyStudent(id, pw))){ alert("비밀번호가 틀립니다."); return; }
+    onlineMe = { id, name: students.find(s=>s.id===id).name }; saveMe(); renderShop();
+  } catch(e){ alert(e.message); }
+}
+function shopLogout(){ onlineMe=null; localStorage.removeItem("online_me"); renderShop(); }
+// ---- 출석체크 ----
+function attendHtml(s){
+  const today = new Date(Date.now() + 9*3600*1000).toISOString().slice(0,10);   // KST 날짜
+  const done = s.last_attend === today;
+  return `<div class="attend-box">
+    <div><b>🎁 출석체크</b><div style="font-size:12px;color:var(--sub)">매일 한 번 포인트를 받아요${s.attend_streak?` · 🔥${s.attend_streak}일 연속`:""}</div></div>
+    <button class="btn ${done?'btn-ghost':'btn-primary'}" style="flex:none;width:auto;padding:10px 16px" ${done?"disabled":""} onclick="doAttend()">${done?"✅ 오늘 완료":"출석하기"}</button>
+  </div>`;
+}
+async function doAttend(){
+  if(!onlineMe) return;
+  try {
+    const { data, error } = await sb.rpc("attend",{p_id:onlineMe.id});
+    if(error) throw new Error(error.message);
+    if(data.already) quickToast("오늘은 이미 출석했어요 ✅");
+    else { sfx.win(); confetti(); quickToast(`🎁 출석 완료! +${data.gained}P (🔥${data.streak}일 연속)`); }
+    await loadStudents(); renderShop();
+  } catch(e){ alert(e.message); }
 }
 function shopSection(title, items, s, owned) {
   if (!items.length) return "";
