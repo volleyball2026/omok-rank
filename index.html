@@ -141,6 +141,26 @@
   .rgrid.rjanggi .rdisk { font-size:min(4.2vmin,17px); }
   .rsq { position:relative; display:flex; align-items:center; justify-content:center;
     border:0.5px solid rgba(107,68,35,0.4); font-weight:900; }
+  /* 오목판: 바둑판은 칸이 아니라 '선의 교차점'에 돌을 놓는다.
+     칸 테두리 대신 칸 '가운데'로 선을 그어, 칸 중앙(=교차점)에 돌이 오게 한다. */
+  .rgrid.romok { --ln:#7a5230; --st:#7a5230; }
+  .rgrid.romok .rsq { border:0; background-repeat:no-repeat;
+    background-image:linear-gradient(var(--ln),var(--ln)), linear-gradient(var(--ln),var(--ln));
+    background-position:center center, center center;
+    background-size:1px 100%, 100% 1px; }
+  /* 가장자리 칸은 바깥으로 삐져나가는 반 칸을 잘라낸다 (맨 끝 선이 곧 맨 끝 교차점) */
+  .rgrid.romok .rsq:nth-child(-n+15) { background-size:1px 50%, 100% 1px; background-position:center bottom, center center; }
+  .rgrid.romok .rsq:nth-child(n+211) { background-size:1px 50%, 100% 1px; background-position:center top, center center; }
+  .rgrid.romok .rsq:nth-child(15n+1) { background-size:1px 100%, 50% 1px; background-position:center center, right center; }
+  .rgrid.romok .rsq:nth-child(15n)   { background-size:1px 100%, 50% 1px; background-position:center center, left center; }
+  /* 네 귀퉁이 (위 규칙들보다 뒤에 와야 이김) */
+  .rgrid.romok .rsq:nth-child(1)   { background-size:1px 50%, 50% 1px; background-position:center bottom, right center; }
+  .rgrid.romok .rsq:nth-child(15)  { background-size:1px 50%, 50% 1px; background-position:center bottom, left center; }
+  .rgrid.romok .rsq:nth-child(211) { background-size:1px 50%, 50% 1px; background-position:center top, right center; }
+  .rgrid.romok .rsq:nth-child(225) { background-size:1px 50%, 50% 1px; background-position:center top, left center; }
+  /* 화점(별) */
+  .rgrid.romok .rsq.star::before { content:""; position:absolute; width:22%; height:22%;
+    border-radius:50%; background:var(--st); }
   .rsq.light { background:#f0d9b5; } .rsq.dark { background:#b58863; }
   .rsq.palace { background:rgba(150,95,40,0.16); }
   .rsq.rlast { box-shadow:inset 0 0 0 3px #f7d84e; }
@@ -273,6 +293,23 @@
   .feed-row:last-child { border-bottom:none; }
   .feed-row .vs { flex:1; }
   .feed-row .w { font-weight:800; } .feed-row .l { color:var(--sub); }
+  /* 경기 한 줄의 부가정보(종목·랭킹전·온라인·시각) */
+  .fd-meta { display:block; margin-top:3px; font-size:11px; font-weight:600; color:var(--sub); }
+  .fd-chip { display:inline-block; padding:1px 6px; border-radius:999px; font-size:10px;
+    font-weight:800; margin-right:4px; vertical-align:1px; }
+  .fd-chip.rank   { background:#fff3d6; color:#8a6d1a; }
+  .fd-chip.friend { background:#eef2f7; color:#5c6b7a; }
+  .fd-chip.on     { background:#e6f0ff; color:#1c5fb4; }
+  .fd-time { float:right; font-weight:700; }
+  .feed-more { width:100%; margin-top:10px; border:2px solid #f0e5d8; background:#fffdf9; color:var(--sub);
+    border-radius:12px; padding:10px 0; font-size:13px; font-weight:800; cursor:pointer; }
+  /* 전체 경기: 날짜 구분 + 필터 */
+  .day-head { position:sticky; top:0; background:#fff; padding:9px 0 5px; margin-top:6px;
+    font-size:12.5px; font-weight:900; color:var(--orange-deep); border-bottom:1px solid #f4ece1; z-index:1; }
+  .fd-filters { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 6px; }
+  .fd-f { border:2px solid #f0e5d8; background:#fffdf9; color:var(--sub); border-radius:999px;
+    padding:5px 11px; font-size:12px; font-weight:800; cursor:pointer; }
+  .fd-f.on { background:var(--orange); border-color:var(--orange); color:#fff; }
   /* 관리 버튼 */
   .mini-btns { display:flex; gap:8px; margin-top:18px; }
   .mini-btn { flex:1; border:2px solid #f0e5d8; background:#fffdf9; color:var(--sub); border-radius:12px;
@@ -497,6 +534,9 @@
 <!-- 복기 -->
 <div class="modal-back" id="replayBack"><div class="modal" id="replayBody"></div></div>
 
+<!-- 전체 경기 기록 (최근 경기 더보기) -->
+<div class="modal-back" id="feedBack"><div class="modal" id="feedBody"></div></div>
+
 <!-- 온라인 대국 -->
 <div class="modal-back" id="onlineBack"><div class="modal" id="onlineBody"></div></div>
 
@@ -617,12 +657,16 @@ async function pairBlocked(aId, bId) {
   const isPair = m => (m.winner_id===aId && m.loser_id===bId) || (m.winner_id===bId && m.loser_id===aId);
   return data.every(isPair);
 }
-async function saveGameRecord(gameType, p1, p2, winnerId, result, moves) {
+// opt: { ranked, online, lp }  — lp는 랭킹전 승자의 LP 획득량
+async function saveGameRecord(gameType, p1, p2, winnerId, result, moves, opt) {
+  const o = opt || {};
   try {
     await sb.from("game_records").insert({
       game_type: gameType, p1_id: p1.id, p1_name: p1.name, p2_id: p2.id, p2_name: p2.name,
       winner_id: winnerId, result, moves,
+      ranked: !!o.ranked, online: !!o.online, lp_change: o.lp != null ? o.lp : null,
     });
+    loadFeed();                       // 피드 즉시 갱신
   } catch (e) { /* 저장 실패해도 게임 진행엔 영향 없음 */ }
 }
 async function fetchGameRecords(studentId, limit = 20) {
@@ -633,6 +677,14 @@ async function fetchGameRecords(studentId, limit = 20) {
 }
 async function fetchRecentMatches(limit = 10) {
   const { data, error } = await sb.from("match_history").select("*").order("id", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+// 최근 경기 피드용 — 랭킹전·친선전·온라인 전부 game_records 에 남는다
+async function fetchRecentGames(limit = 10) {
+  const { data, error } = await sb.from("game_records")
+    .select("id,game_type,p1_id,p1_name,p2_id,p2_name,winner_id,result,ranked,online,lp_change,created_at")
+    .order("id", { ascending: false }).limit(limit);
   if (error) throw error;
   return data || [];
 }
@@ -658,22 +710,110 @@ async function loadStudents() {
 }
 
 // ---------- 최근 경기 피드 ----------
+const GAME_ICON = { omok:"⚫", chess:"♟️", janggi:"🏯" };
+const GAME_NAME = { omok:"오목", chess:"체스", janggi:"장기" };
+const DOW = ["일","월","화","수","목","금","토"];
+const two = (n) => String(n).padStart(2,"0");
+
+// 오늘/어제 기준 날짜키 (로컬 시간)
+function dayKey(d){ return `${d.getFullYear()}-${two(d.getMonth()+1)}-${two(d.getDate())}`; }
+function dayLabel(d){
+  const today = new Date(), y = new Date(today); y.setDate(y.getDate()-1);
+  const base = `${d.getMonth()+1}월 ${d.getDate()}일 (${DOW[d.getDay()]})`;
+  if(dayKey(d)===dayKey(today)) return `오늘 · ${base}`;
+  if(dayKey(d)===dayKey(y)) return `어제 · ${base}`;
+  return base;
+}
+function hhmm(d){ return `${two(d.getHours())}:${two(d.getMinutes())}`; }
+// 피드 한 줄용 시각: 오늘이면 시:분, 아니면 날짜 + 시:분
+function whenText(d){
+  const today = new Date();
+  if(dayKey(d)===dayKey(today)) return hhmm(d);
+  return `${d.getMonth()+1}/${d.getDate()} ${hhmm(d)}`;
+}
+
+function gameRowHTML(g, opts){
+  const o = opts || {};
+  const d = new Date(g.created_at);
+  const icon = GAME_ICON[g.game_type] || "⚔️";
+  const draw = g.result === "draw" || !g.winner_id;
+  const wName = g.winner_id === g.p1_id ? g.p1_name : g.p2_name;
+  const lName = g.winner_id === g.p1_id ? g.p2_name : g.p1_name;
+  const who = draw
+    ? `<span class="w">${esc(g.p1_name)}</span><span style="color:var(--sub)"> vs </span><span class="w">${esc(g.p2_name)}</span><span style="color:var(--sub)"> · 무승부</span>`
+    : `<span class="w">${esc(wName)}</span><span style="color:var(--sub)"> 승 · </span><span class="l">${esc(lName)}</span>`;
+  const chips = (g.ranked ? `<span class="fd-chip rank">🏆 랭킹전</span>` : `<span class="fd-chip friend">🤝 친선전</span>`)
+    + (g.online ? `<span class="fd-chip on">🌐 온라인</span>` : "");
+  const lp = (g.ranked && !draw && g.lp_change != null) ? `<span class="lp-up">+${g.lp_change}</span>` : "";
+  return `<div class="feed-row">
+    <span title="${esc(GAME_NAME[g.game_type]||"")}">${icon}</span>
+    <span class="vs">${who}
+      <span class="fd-meta">${chips}${esc(GAME_NAME[g.game_type]||g.game_type)}
+        <span class="fd-time">${esc(o.full ? hhmm(d) : whenText(d))}</span></span></span>
+    ${lp}</div>`;
+}
+
 async function loadFeed() {
   const wrap = document.getElementById("feedWrap");
+  if (!wrap || !sb) return;
   try {
-    const rows = await fetchRecentMatches(10);
+    const rows = await fetchRecentGames(10);
     if (!rows.length) { wrap.innerHTML = ""; return; }
-    wrap.innerHTML = `<div class="feed-title">📜 최근 경기</div><div class="feed">` +
-      rows.map(m => `<div class="feed-row">
-        <span>⚔️</span>
-        <span class="vs"><span class="w">${esc(m.winner_name)}</span>
-          <span style="color:var(--sub)"> 승 · </span><span class="l">${esc(m.loser_name)}</span></span>
-        <span class="lp-up">+${m.winner_lp_change}</span></div>`).join("") + `</div>`;
+    wrap.innerHTML = `<div class="feed-title">📜 최근 경기</div><div class="feed">`
+      + rows.map(g => gameRowHTML(g)).join("") + `</div>`
+      + `<button class="feed-more" onclick="openAllGames()">📅 더보기 — 날짜별 전체 기록</button>`;
   } catch (e) { wrap.innerHTML = ""; }
 }
 
+// ---------- 전체 경기 기록 (날짜별) ----------
+let allGames = { rows:[], gt:"all", mode:"all", loaded:false };
+async function openAllGames(){
+  openModal("feedBack");
+  const body = document.getElementById("feedBody");
+  body.innerHTML = `<span class="close-x" onclick="closeModal('feedBack')">✕</span>
+    <h2>📅 전체 경기 기록</h2><div class="empty">불러오는 중…</div>`;
+  try {
+    allGames.rows = await fetchRecentGames(500);
+    allGames.loaded = true;
+    renderAllGames();
+  } catch(e){
+    body.innerHTML = `<span class="close-x" onclick="closeModal('feedBack')">✕</span>
+      <h2>📅 전체 경기 기록</h2><div class="empty">불러올 수 없어요.<br>${esc(e.message)}</div>`;
+  }
+}
+function setGameFilter(kind, val){ allGames[kind] = val; renderAllGames(); }
+function renderAllGames(){
+  const { rows, gt, mode } = allGames;
+  const list = rows.filter(g => (gt==="all" || g.game_type===gt)
+    && (mode==="all" || (mode==="ranked" ? g.ranked : !g.ranked)));
+  // 날짜별로 묶기 (rows는 최신순이라 순서 그대로 유지됨)
+  const groups = [];
+  for(const g of list){
+    const d = new Date(g.created_at), k = dayKey(d);
+    if(!groups.length || groups[groups.length-1].k !== k) groups.push({ k, d, items:[] });
+    groups[groups.length-1].items.push(g);
+  }
+  const fBtn = (kind, val, label) =>
+    `<button class="fd-f${allGames[kind]===val?" on":""}" onclick="setGameFilter('${kind}','${val}')">${label}</button>`;
+  const body = groups.length
+    ? groups.map(gr => `<div class="day-head">${dayLabel(gr.d)} · ${gr.items.length}경기</div>`
+        + gr.items.map(g => gameRowHTML(g, { full:true })).join("")).join("")
+    : `<div class="empty">해당하는 경기가 없어요.</div>`;
+  document.getElementById("feedBody").innerHTML = `
+    <span class="close-x" onclick="closeModal('feedBack')">✕</span>
+    <h2>📅 전체 경기 기록</h2>
+    <div class="fd-filters">
+      ${fBtn("gt","all","전체 종목")}${fBtn("gt","omok","⚫ 오목")}${fBtn("gt","chess","♟️ 체스")}${fBtn("gt","janggi","🏯 장기")}
+    </div>
+    <div class="fd-filters">
+      ${fBtn("mode","all","전체")}${fBtn("mode","ranked","🏆 랭킹전")}${fBtn("mode","friendly","🤝 친선전")}
+    </div>
+    <div class="tg-note" style="margin:0 0 4px">${list.length}경기 · 최근 500경기까지 보여줘요</div>
+    ${body}`;
+}
+
 // ---------- 실시간 동기화 ----------
-let realtimeReady = false, realtimeTimer = null;
+let realtimeReady = false, realtimeTimer = null, feedTimer = null;
 function setupRealtime() {
   if (realtimeReady || !sb) return;
   realtimeReady = true;
@@ -684,6 +824,11 @@ function setupRealtime() {
   sb.channel("omok-live")
     .on("postgres_changes", { event: "*", schema: "public", table: "students" }, refresh)
     .on("postgres_changes", { event: "*", schema: "public", table: "match_history" }, refresh)
+    // 친선전·온라인 경기는 students/match_history를 건드리지 않으므로 따로 구독해야 피드가 갱신된다
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "game_records" }, () => {
+      clearTimeout(feedTimer);
+      feedTimer = setTimeout(() => { loadFeed(); }, 400);
+    })
     .subscribe();
 }
 function tierPill(t){ return `<span class="tier-pill" style="background:${TIER_COLORS[t]||'#999'}">${TIER_EMOJI[t]||''} ${t}</span>`; }
@@ -1318,16 +1463,21 @@ async function endGame(color) {
   document.getElementById("replayBtn").style.display = "block";
   const winner = color===Omok.BLACK ? game.black : game.white;
   const loser  = color===Omok.BLACK ? game.white : game.black;
-  saveGameRecord("omok", game.black, game.white, winner.id, "win", game.history.map(h => [h.r, h.c]));
+  const moves = game.history.map(h => [h.r, h.c]);
   const msg = document.getElementById("gameMsg");
-  if(!game.ranked){ msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹·점수 미반영)`; return; }
+  if(!game.ranked){
+    saveGameRecord("omok", game.black, game.white, winner.id, "win", moves, { ranked:false });
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹·점수 미반영)`; return;
+  }
   msg.textContent = `🎉 ${winner.name} 승리! 결과 기록 중…`;
   try {
-    const r = await recordMatch(winner.id, loser.id);
+    const r = await recordMatch(winner.id, loser.id);        // LP를 알아야 기록에 남길 수 있어 먼저 반영
+    saveGameRecord("omok", game.black, game.white, winner.id, "win", moves, { ranked:true, lp:r.winner.lp_change });
     await loadStudents();
     showResultToast(r);
     msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! (${winner===game.black?'흑':'백'}) — 랭킹에 반영됨`;
   } catch(e) {
+    saveGameRecord("omok", game.black, game.white, winner.id, "win", moves, { ranked:true });
     msg.textContent = `승자: ${winner.name} · 기록 실패: ${e.message}`;
   }
 }
@@ -1336,7 +1486,7 @@ function endDraw() {
   game.over = true; clockStop(); updateTurnUI(); draw();
   sfx.draw();
   document.getElementById("replayBtn").style.display = "block";
-  saveGameRecord("omok", game.black, game.white, null, "draw", game.history.map(h => [h.r, h.c]));
+  saveGameRecord("omok", game.black, game.white, null, "draw", game.history.map(h => [h.r, h.c]), { ranked: game.ranked });
   document.getElementById("gameMsg").innerHTML = `🤝 무승부! 판이 가득 찼어요 (점수 변동 없음)`;
 }
 
@@ -1502,19 +1652,23 @@ async function endChess(winnerColor){
   chessGame.over = true; clockStop();
   const winner = winnerColor==="w" ? chessGame.white : chessGame.black;
   const loser  = winnerColor==="w" ? chessGame.black : chessGame.white;
-  saveGameRecord("chess", chessGame.white, chessGame.black, winner.id, "win", chessGame.moves);
+  const save = (opt) => saveGameRecord("chess", chessGame.white, chessGame.black, winner.id, "win", chessGame.moves, opt);
   document.getElementById("cResignBtn").disabled = true;
   document.getElementById("cReplayBtn").style.display = "block";
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
   sfx.win(); confetti();
   const msg = document.getElementById("chessMsg");
-  if(!chessGame.ranked){ msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹 미반영)`; return; }
+  if(!chessGame.ranked){
+    save({ ranked:false });
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · 🤝 친선전 (랭킹 미반영)`; return;
+  }
   msg.textContent = `🎉 ${winner.name} 승리! 기록 중…`;
   try {
     const r = await recordMatch(winner.id, loser.id);
+    save({ ranked:true, lp:r.winner.lp_change });
     await loadStudents(); showResultToast(r);
     msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! — 랭킹 반영됨`;
-  } catch(e){ msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
+  } catch(e){ save({ ranked:true }); msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
 }
 function chessDraw(){
   chessGame.over = true; clockStop();
@@ -1522,7 +1676,7 @@ function chessDraw(){
   document.getElementById("cReplayBtn").style.display = "block";
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
   sfx.draw();
-  saveGameRecord("chess", chessGame.white, chessGame.black, null, "draw", chessGame.moves);
+  saveGameRecord("chess", chessGame.white, chessGame.black, null, "draw", chessGame.moves, { ranked: chessGame.ranked });
   document.getElementById("chessMsg").textContent = "🤝 스테일메이트 · 무승부 (점수 변동 없음)";
 }
 function chessResign(){
@@ -1592,19 +1746,23 @@ async function endJanggi(winnerColor){
   janggiGame.over = true; clockStop();
   const winner = winnerColor==="r" ? janggiGame.red : janggiGame.blue;
   const loser  = winnerColor==="r" ? janggiGame.blue : janggiGame.red;
-  saveGameRecord("janggi", janggiGame.red, janggiGame.blue, winner.id, "win", janggiGame.moves);
+  const save = (opt) => saveGameRecord("janggi", janggiGame.red, janggiGame.blue, winner.id, "win", janggiGame.moves, opt);
   document.getElementById("jResignBtn").disabled = true;
   document.getElementById("jReplayBtn").style.display = "block";
   document.getElementById("jpRed").classList.remove("turn"); document.getElementById("jpBlue").classList.remove("turn");
   sfx.win(); confetti();
   const msg = document.getElementById("janggiMsg");
-  if(!janggiGame.ranked){ msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! (궁 포획) · 🤝 친선전 (랭킹 미반영)`; return; }
+  if(!janggiGame.ranked){
+    save({ ranked:false });
+    msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! (궁 포획) · 🤝 친선전 (랭킹 미반영)`; return;
+  }
   msg.textContent = `🎉 ${winner.name} 승리! (궁 포획) 기록 중…`;
   try {
     const r = await recordMatch(winner.id, loser.id);
+    save({ ranked:true, lp:r.winner.lp_change });
     await loadStudents(); showResultToast(r);
     msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! — 랭킹 반영됨`;
-  } catch(e){ msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
+  } catch(e){ save({ ranked:true }); msg.textContent = `${winner.name} 승리 · 기록 실패: ${e.message}`; }
 }
 function janggiResign(){
   if(!janggiGame || janggiGame.over) return;
@@ -1616,11 +1774,12 @@ function janggiResign(){
 
 // ==================== 복기 (다시보기) ====================
 let replayGames = {};
-let review = null;
+let review = null, replayViewerId = null;
 const GAME_LABEL = { omok:"⚫ 오목", chess:"♟️ 체스", janggi:"🏯 장기" };
 
 async function openReplayList(id){
   const s = students.find(x => x.id === id);
+  replayViewerId = id;                 // 이 학생 시점으로 판을 보여준다 (체스: 흑이면 뒤집힘)
   const body = document.getElementById("detailBody");
   openModal("detailBack");
   body.innerHTML = `<span class="close-x" onclick="closeModal('detailBack')">✕</span>
@@ -1727,8 +1886,10 @@ function renderReplay(){
   const g = review.game, idx = review.idx, el = document.getElementById("replayBoard");
   const last = idx > 0 ? g.moves[idx-1] : null;
   const f = (review.coach && idx >= 1) ? review.coach[idx-1] : null;
+  // 복기 중인 학생이 후공(체스=흑)이면 그 학생 시점으로 판을 뒤집는다
+  const flip = g.game_type === "chess" && replayViewerId != null && g.p2_id === replayViewerId;
   if(g.game_type === "omok") el.innerHTML = replayOmokHTML(g.moves, idx, last, f);
-  else if(g.game_type === "chess") el.innerHTML = replayGridHTML(reconstructChess(g.moves, idx), 8, 8, "chess", last);
+  else if(g.game_type === "chess") el.innerHTML = replayGridHTML(reconstructChess(g.moves, idx), 8, 8, "chess", last, flip);
   else el.innerHTML = replayGridHTML(reconstructJanggi(g.moves, idx), 10, 9, "janggi", last);
   document.getElementById("replayCount").textContent = `${idx} / ${g.moves.length} 수`;
   const fb = document.getElementById("replayFeedback");
@@ -1743,14 +1904,22 @@ function renderReplay(){
     fb.innerHTML = "▶ 버튼으로 한 수씩 넘기며 코칭을 받아보세요"; fb.className = "replay-fb tip";
   } else { fb.innerHTML = "체스·장기 복기 (코칭은 오목만 지원)"; fb.className = "replay-fb tip"; }
 }
+// ---- 오목판(그리드) 공통 ----  캔버스 판과 같은 화점 위치
+const OMOK_STAR = new Set(["3,3","3,11","11,3","11,11","7,7"]);
+const isStar = (r,c) => OMOK_STAR.has(r+","+c);
+function omokGridStyle(width, skin){
+  const s = skin || DEFAULT_BOARD;
+  return `grid-template-columns:repeat(15,1fr);grid-template-rows:repeat(15,1fr);aspect-ratio:1;`
+       + `width:${width};background:${s.bg};--ln:${s.line};--st:${s.star||s.line}`;
+}
 function replayOmokHTML(moves, upto, last, f){
   const N = 15, b = Array.from({length:N},()=>Array(N).fill(0));
   for(let i=0;i<upto;i++){ const [r,c] = moves[i]; b[r][c] = i % 2 === 0 ? 1 : 2; }
   const at = (list, r, c) => !!(list && list.some(p => p[0]===r && p[1]===c));
-  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(84vmin,340px)">`;
+  let h = `<div class="rgrid romok" style="${omokGridStyle("min(84vmin,340px)")}">`;
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    const isLast = last && last[0]===r && last[1]===c;
-    let cls = isLast ? " rlast" : "";
+    let cls = (isStar(r,c) && !b[r][c]) ? " star" : "";
+    if(last && last[0]===r && last[1]===c) cls += " rlast";
     if(f && !b[r][c]){
       if(f.hint && f.hint[0]===r && f.hint[1]===c) cls += " rhint";
       else if(at(f.marks, r, c)) cls += " rmark";
@@ -1760,10 +1929,11 @@ function replayOmokHTML(moves, upto, last, f){
   }
   return h + `</div>`;
 }
-function replayGridHTML(board, rows, cols, type, last){
+function replayGridHTML(board, rows, cols, type, last, flip){
   const w = "width:min(84vmin,340px)";
   let h = `<div class="rgrid r${type}" style="grid-template-columns:repeat(${cols},1fr);grid-template-rows:repeat(${rows},1fr);aspect-ratio:${cols}/${rows};${w}">`;
-  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+  for(let dr=0;dr<rows;dr++) for(let dc=0;dc<cols;dc++){
+    const r = flip ? rows-1-dr : dr, c = flip ? cols-1-dc : dc;
     const isLast = last && ((last[0]===r&&last[1]===c) || (last[2]===r&&last[3]===c));
     const p = board[r][c]; let extra = "", inner = "";
     if(type === "chess"){
@@ -1980,11 +2150,12 @@ function renderOnlineBoard(row){
   const boardSkin = (bp && hasCustomBoard(bp) && SHOP[bp.equip_board] && SHOP[bp.equip_board].data)
                  || (wp && hasCustomBoard(wp) && SHOP[wp.equip_board] && SHOP[wp.equip_board].data) || DEFAULT_BOARD;
   const stB = resolveStone(bp?bp.equip_stone:null,"black"), stW = resolveStone(wp?wp.equip_stone:null,"white");
-  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,380px);background:${boardSkin.bg}">`;
+  let h = `<div class="rgrid romok" style="${omokGridStyle("min(88vmin,380px)", boardSkin)}">`;
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    const isLast = last && last[0]===r && last[1]===c;
+    let cls = (isStar(r,c) && !b[r][c]) ? " star" : "";
+    if(last && last[0]===r && last[1]===c) cls += " rlast";
     const inner = b[r][c] ? `<span class="rstone" style="${stoneStyle(b[r][c]===Omok.BLACK?stB:stW)}"></span>` : "";
-    h += `<div class="rsq${isLast?' rlast':''}" onclick="onlineClick(${r},${c})">${inner}</div>`;
+    h += `<div class="rsq${cls}" onclick="onlineClick(${r},${c})">${inner}</div>`;
   }
   el.innerHTML = h + `</div>`;
   const msg = document.getElementById("olMsg");
@@ -2019,8 +2190,11 @@ function renderOnlineChessBoard(row){
   const legalSet = new Set((og.legal||[]).map(m=>m[0]+","+m[1]));
   const last = row.moves.length ? row.moves[row.moves.length-1] : null;
   const chk = row.status==="playing" && Chess.inCheck(st.board, st.turn) ? Chess.kingPos(st.board, st.turn) : null;
+  // 내가 흑이면 판을 180° 돌려서 '내 진영이 항상 아래'가 되게 한다 (board[0]이 흑 진영이라 기본은 백 시점)
+  const flip = myC === "b";
   let h = `<div class="rgrid rchess" style="grid-template-columns:repeat(8,1fr);grid-template-rows:repeat(8,1fr);aspect-ratio:1;width:min(88vmin,380px)">`;
-  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+  for(let dr=0;dr<8;dr++) for(let dc=0;dc<8;dc++){
+    const r = flip ? 7-dr : dr, c = flip ? 7-dc : dc;
     const p = st.board[r][c];
     let cls = "rsq " + ((r+c)%2 ? "dark":"light");
     if(og.sel && og.sel[0]===r && og.sel[1]===c) cls += " sel";
@@ -2098,9 +2272,13 @@ async function onlineGameOver(row){
   try {
     const { data: claimed } = await sb.rpc("og_claim_record",{p_id:row.id});   // 결과·복기 1회만 기록
     if(claimed){
+      let lp = null;
       if(row.result && row.result!=="draw" && row.winner_id && row.ranked){
         const loser = row.winner_id===row.host_id ? row.guest_id : row.host_id;
-        try { await recordMatch(row.winner_id, loser); } catch(e){}   // 테스터·리매치 제한 시 조용히 스킵
+        try {
+          const r = await recordMatch(row.winner_id, loser);
+          lp = r.winner.lp_change;
+        } catch(e){}   // 테스터·리매치 제한 시 조용히 스킵
         loadStudents();
       }
       // 복기 저장: p1 = 선공(오목:흑 / 체스:백)
@@ -2109,7 +2287,8 @@ async function onlineGameOver(row){
       const p1 = { id: hostFirst?row.host_id:row.guest_id, name: hostFirst?row.host_name:row.guest_name };
       const p2 = { id: hostFirst?row.guest_id:row.host_id, name: hostFirst?row.guest_name:row.host_name };
       saveGameRecord(row.game_type, p1, p2,
-        row.result==="draw"?null:row.winner_id, row.result==="draw"?"draw":"win", row.moves);
+        row.result==="draw"?null:row.winner_id, row.result==="draw"?"draw":"win", row.moves,
+        { ranked: !!row.ranked, online: true, lp });
     }
   } catch(e){}
 }
@@ -2307,12 +2486,12 @@ function openLesson(i){
 function renderLessonBoard(extra){
   const L = curLesson.L, b = lessonBoard(L), N = Omok.N;
   const marks = extra || {};
-  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,360px)">`;
+  let h = `<div class="rgrid romok" style="${omokGridStyle("min(88vmin,360px)")}">`;
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
-    let cls = "";
-    if(marks.at && marks.at[0]===r && marks.at[1]===c) cls = " rlast";
-    else if(curLesson.reveal && !b[r][c] && curLesson.answers.some(p=>p[0]===r&&p[1]===c)) cls = " rhint";
     const v = (marks.at && marks.at[0]===r && marks.at[1]===c) ? L.color : b[r][c];
+    let cls = (isStar(r,c) && !v) ? " star" : "";
+    if(marks.at && marks.at[0]===r && marks.at[1]===c) cls += " rlast";
+    else if(curLesson.reveal && !b[r][c] && curLesson.answers.some(p=>p[0]===r&&p[1]===c)) cls += " rhint";
     const inner = v ? `<span class="rstone ${v===1?'bk':'wt'}"></span>` : "";
     h += `<div class="rsq${cls}" onclick="lessonClick(${r},${c})">${inner}</div>`;
   }

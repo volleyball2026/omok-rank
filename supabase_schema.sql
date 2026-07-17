@@ -486,6 +486,12 @@ create table if not exists game_records (
   moves      jsonb not null,             -- [[..],[..]] 게임별 수순
   created_at timestamptz not null default now()
 );
+-- 최근 경기 피드용 컬럼 (기존 DB에도 안전하게 추가됨)
+alter table game_records add column if not exists ranked    boolean not null default false;  -- 랭킹전 여부
+alter table game_records add column if not exists online    boolean not null default false;  -- 온라인 대국 여부
+alter table game_records add column if not exists lp_change int;                             -- 승자 LP 획득(랭킹전만)
+create index if not exists game_records_created_idx on game_records (created_at desc);
+
 alter table game_records enable row level security;
 drop policy if exists "gr read"   on game_records;
 drop policy if exists "gr insert" on game_records;
