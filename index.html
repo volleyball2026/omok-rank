@@ -153,6 +153,12 @@
   .rstone.bk { background:radial-gradient(circle at 35% 32%,#555,#111); }
   .rstone.wt { background:radial-gradient(circle at 35% 32%,#fff,#cfd3d8); border:1px solid #ccc; }
   #replayCount { pointer-events:none; }
+  .replay-fb { margin:10px 0 2px; padding:10px 12px; border-radius:12px; font-size:13.5px; font-weight:600;
+    text-align:center; line-height:1.4; }
+  .replay-fb.tip  { background:#f1f3f5; color:var(--sub); }
+  .replay-fb.good { background:#e6f7ec; color:#137a3f; }
+  .replay-fb.miss { background:#fff3d6; color:#8a6d1a; }
+  .replay-fb.warn { background:#ffe6e6; color:#c0261b; }
   /* 승격 선택창 */
   .promo-picker { position:fixed; inset:0; background:rgba(60,43,31,0.55); z-index:120;
     display:none; align-items:center; justify-content:center; flex-direction:column; }
@@ -468,6 +474,9 @@
 
 <!-- 온라인 대국 -->
 <div class="modal-back" id="onlineBack"><div class="modal" id="onlineBody"></div></div>
+
+<!-- 오목 배우기(커리큘럼) -->
+<div class="modal-back" id="lessonBack"><div class="modal" id="lessonBody"></div></div>
 
 <div id="promoPicker" class="promo-picker">
   <div class="promo-title">♟️ 승격할 기물을 고르세요</div>
@@ -789,7 +798,8 @@ async function openDetail(id) {
         <span style="font-weight:800;color:#e0a800;margin-left:6px">💰 ${s.points||0} P</span></div>
       <div style="display:flex;gap:10px;text-align:center;margin-bottom:18px">
         ${statBox(s.wins,'승')}${statBox(s.losses,'패')}${statBox(s.win_rate+'%','승률')}</div>
-      <button class="btn btn-primary" style="margin:4px 0 16px" onclick="openReplayList(${s.id})">📖 복기 — 내 대국 다시보기</button>
+      <button class="btn btn-primary" style="margin:4px 0 8px" onclick="openReplayList(${s.id})">📖 복기 — 내 대국 다시보기</button>
+      <button class="btn btn-ghost" style="margin:0 0 16px" onclick="openCurriculum()">🎓 오목 배우기 — 단계별 문제</button>
       <h3 style="font-size:15px;margin:0 0 6px">최근 전적</h3>${rows}`;
   } catch(e){ document.getElementById("detailBody").innerHTML = `<div class="empty">${e.message}</div>`; }
 }
@@ -1577,6 +1587,7 @@ function openReplay(gameId){
     <h2>${GAME_LABEL[g.game_type]} 복기</h2>
     <div class="tg-note" style="margin:0 0 8px">${esc(g.p1_name)} vs ${esc(g.p2_name)} · ${esc(resultTxt)}</div>
     <div class="board-wrap"><div id="replayBoard"></div></div>
+    <div id="replayFeedback" class="replay-fb"></div>
     <div class="game-btns" style="margin-top:12px">
       <button class="btn btn-ghost" onclick="replaySeek(0)">⏮</button>
       <button class="btn btn-ghost" onclick="replayStep(-1)">◀ 이전</button>
@@ -1607,6 +1618,47 @@ function renderReplay(){
   else if(g.game_type === "chess") el.innerHTML = replayGridHTML(reconstructChess(g.moves, idx), 8, 8, "chess", last);
   else el.innerHTML = replayGridHTML(reconstructJanggi(g.moves, idx), 10, 9, "janggi", last);
   document.getElementById("replayCount").textContent = `${idx} / ${g.moves.length} 수`;
+  const fb = document.getElementById("replayFeedback");
+  if(fb){
+    if(g.game_type === "omok" && idx >= 1){
+      const f = omokFeedback(g.moves, idx);
+      const who = (idx-1)%2===0 ? "⚫흑" : "⚪백";
+      fb.innerHTML = `<b>${idx}수 (${who}):</b> ${f.text}`;
+      fb.className = "replay-fb " + f.kind;
+    } else if(g.game_type === "omok"){
+      fb.innerHTML = "▶ 버튼으로 한 수씩 넘기며 코칭을 받아보세요"; fb.className = "replay-fb tip";
+    } else { fb.innerHTML = "체스·장기 복기 (코칭은 오목만 지원)"; fb.className = "replay-fb tip"; }
+  }
+}
+// ---- 오목 복기 코칭(#6) ----
+function winningCells(board, color){
+  const cells = [];
+  for(let r=0;r<Omok.N;r++) for(let c=0;c<Omok.N;c++){
+    if(board[r][c]!==Omok.EMPTY) continue;
+    if(Omok.analyze(board, r, c, color).win) cells.push([r,c]);
+  }
+  return cells;
+}
+function omokFeedback(moves, idx){
+  const before = Omok.createBoard();
+  for(let i=0;i<idx-1;i++){ const [r,c]=moves[i]; before[r][c] = i%2===0?Omok.BLACK:Omok.WHITE; }
+  const [mr,mc] = moves[idx-1];
+  const mover = (idx-1)%2===0 ? Omok.BLACK : Omok.WHITE;
+  const opp = mover===Omok.BLACK ? Omok.WHITE : Omok.BLACK;
+  const P = (r,c)=>`(${r+1},${c+1})`;
+  const myWins = winningCells(before, mover);
+  if(myWins.some(([r,c])=>r===mr&&c===mc)) return { kind:"good", text:"🎉 승리수! 5목을 완성했어요." };
+  if(myWins.length) return { kind:"miss", text:`💡 아쉬워요! ${P(...myWins[0])}에 뒀으면 바로 이길 수 있었어요.` };
+  const oppWins = winningCells(before, opp);
+  if(oppWins.length && !oppWins.some(([r,c])=>r===mr&&c===mc))
+    return { kind:"warn", text:`⚠️ 위험! 상대가 ${P(...oppWins[0])}에 두면 5목이었어요 — 막았어야 해요.` };
+  if(oppWins.length && oppWins.some(([r,c])=>r===mr&&c===mc))
+    return { kind:"good", text:"🛡️ 잘했어요! 상대의 5목 자리를 막았어요." };
+  const after = before.map(x=>x.slice()); after[mr][mc]=mover;
+  const threats = winningCells(after, mover);
+  if(threats.length>=2) return { kind:"good", text:"🔥 강력한 수! 두 곳으로 이길 수 있어 상대가 못 막아요." };
+  if(threats.length===1) return { kind:"good", text:"👍 좋은 공격! 다음에 이길 자리를 만들었어요." };
+  return { kind:"tip", text:"무난한 수예요." };
 }
 function replayOmokHTML(moves, upto, last){
   const N = 15, b = Array.from({length:N},()=>Array(N).fill(0));
@@ -1938,6 +1990,93 @@ function updateOnlineClock(){
   if(row.status==="playing" && (hostToMove?hostMs:guestMs) <= 0){   // 시간패 -> 상대 승
     const winner = hostToMove ? row.guest_id : row.host_id;
     sb.rpc("og_finish",{p_id:row.id,p_winner_id:winner,p_result:"timeout"});
+  }
+}
+
+// ==================== 오목 배우기 (커리큘럼 #7) ====================
+const LESSONS = [
+  { id:"L1", title:"1. 5목 완성 (가로)", type:"win", color:1,
+    desc:"⚫흑 차례! 한 수로 가로 5목을 만들어 이기세요.",
+    stones:[[7,3,1],[7,4,1],[7,5,1],[7,6,1],[7,2,2],[8,8,2],[6,6,2]] },
+  { id:"L2", title:"2. 5목 완성 (대각선)", type:"win", color:1,
+    desc:"⚫흑 차례! 대각선으로 5목을 완성하세요.",
+    stones:[[5,5,1],[6,6,1],[7,7,1],[8,8,1],[4,4,2],[6,8,2],[9,7,2]] },
+  { id:"L3", title:"3. 상대 5목 막기 (가로)", type:"block", color:1,
+    desc:"⚫흑 차례! 백이 다음에 5목을 두려고 해요. 막으세요!",
+    stones:[[7,4,2],[7,5,2],[7,6,2],[7,7,2],[7,3,1],[9,9,1]] },
+  { id:"L4", title:"4. 상대 5목 막기 (세로)", type:"block", color:1,
+    desc:"⚫흑 차례! 백의 세로 5목을 막으세요.",
+    stones:[[4,7,2],[5,7,2],[6,7,2],[7,7,2],[3,7,1],[9,5,1]] },
+  { id:"L5", title:"5. 공격! '4' 만들기", type:"four", color:1,
+    desc:"⚫흑 차례! 돌 4개를 이어 '다음에 이기는' 위협을 만드세요.",
+    stones:[[7,5,1],[7,6,1],[7,7,1],[5,9,2],[9,9,2]] },
+  { id:"L6", title:"6. 수읽기 — 사이를 메워 5목", type:"win", color:1,
+    desc:"⚫흑 차례! 비어있는 사이 한 곳을 메우면 5목! 찾아보세요.",
+    stones:[[7,3,1],[7,4,1],[7,6,1],[7,7,1],[7,2,2],[7,8,2],[10,10,2]] },
+];
+function lessonProgress(){ try{ return JSON.parse(localStorage.getItem("omok_lessons")||"[]"); }catch(e){ return []; } }
+function markLesson(id){ const p=lessonProgress(); if(!p.includes(id)){ p.push(id); localStorage.setItem("omok_lessons", JSON.stringify(p)); } }
+function lessonBoard(L){ const b=Omok.createBoard(); L.stones.forEach(([r,c,col])=>b[r][c]=col); return b; }
+
+function openCurriculum(){
+  openModal("lessonBack");
+  const done = lessonProgress();
+  const rows = LESSONS.map((L,i)=>{
+    const ok = done.includes(L.id);
+    return `<div class="feed-row" style="cursor:pointer" onclick="openLesson(${i})">
+      <span>${ok?"✅":"⬜"}</span><span class="vs">${esc(L.title)}</span>
+      <span style="color:var(--orange-deep);font-weight:800">▶</span></div>`;
+  }).join("");
+  document.getElementById("lessonBody").innerHTML = `
+    <span class="close-x" onclick="closeModal('lessonBack')">✕</span>
+    <h2>🎓 오목 배우기</h2>
+    <div class="tg-note" style="margin:0 0 10px">단계별 문제를 풀며 실력을 쌓아요! (${done.length}/${LESSONS.length} 완료)</div>
+    ${rows}`;
+}
+let curLesson = null;
+function openLesson(i){
+  const L = LESSONS[i]; curLesson = { L, solved:false };
+  document.getElementById("lessonBody").innerHTML = `
+    <span class="close-x" onclick="closeModal('lessonBack')">✕</span>
+    <h2 style="font-size:17px">${esc(L.title)}</h2>
+    <div class="replay-fb tip" id="lessonMsg" style="margin:0 0 10px">${esc(L.desc)}</div>
+    <div class="board-wrap"><div id="lessonBoard"></div></div>
+    <div class="game-btns" style="margin-top:12px">
+      <button class="btn btn-ghost" onclick="openLesson(${i})">↺ 다시</button>
+      <button class="btn btn-ghost" onclick="openCurriculum()">← 목록</button>
+    </div>`;
+  renderLessonBoard();
+}
+function renderLessonBoard(){
+  const L = curLesson.L, b = lessonBoard(L), N = Omok.N;
+  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,360px)">`;
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const inner = b[r][c] ? `<span class="rstone ${b[r][c]===1?'bk':'wt'}"></span>` : "";
+    h += `<div class="rsq" onclick="lessonClick(${r},${c})">${inner}</div>`;
+  }
+  document.getElementById("lessonBoard").innerHTML = h + `</div>`;
+}
+function lessonClick(r,c){
+  if(!curLesson || curLesson.solved) return;
+  const L = curLesson.L, b = lessonBoard(L);
+  const msg = document.getElementById("lessonMsg");
+  if(b[r][c]!==Omok.EMPTY){ return; }
+  let ok=false;
+  if(L.type==="win") ok = Omok.analyze(b,r,c,L.color).win;
+  else if(L.type==="block") ok = winningCells(b, L.color===1?Omok.WHITE:Omok.BLACK).some(([wr,wc])=>wr===r&&wc===c);
+  else if(L.type==="four"){ const res=Omok.analyze(b,r,c,L.color); if(!(L.color===1&&res.forbidden)){ const a=b.map(x=>x.slice()); a[r][c]=L.color; ok = winningCells(a,L.color).length>=1; } }
+  if(ok){
+    curLesson.solved = true; markLesson(L.id);
+    sfx.win(); confetti();
+    const bb = lessonBoard(L); bb[r][c]=L.color;
+    const el=document.getElementById("lessonBoard");
+    // 정답 돌 표시
+    const N=Omok.N; let h=`<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,360px)">`;
+    for(let rr=0;rr<N;rr++)for(let cc=0;cc<N;cc++){ const isAns=rr===r&&cc===c; h+=`<div class="rsq${isAns?' rlast':''}">${bb[rr][cc]?`<span class="rstone ${bb[rr][cc]===1?'bk':'wt'}"></span>`:""}</div>`; }
+    el.innerHTML=h+`</div>`;
+    msg.className="replay-fb good"; msg.innerHTML="🎉 정답이에요! 잘했어요. ← 목록에서 다음 단계로!";
+  } else {
+    msg.className="replay-fb warn"; msg.textContent="❌ 아쉬워요. 다시 생각해 볼까요? (↺ 다시)";
   }
 }
 
