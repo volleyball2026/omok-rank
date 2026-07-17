@@ -493,16 +493,19 @@ create table if not exists online_games (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+alter table online_games add column if not exists host_color text not null default 'black';  -- 방장 색(black=선/white=후)
+alter table online_games add column if not exists rematch_offer bigint;                       -- 재대국 요청한 학생 id
 alter table online_games enable row level security;
 drop policy if exists "og read" on online_games;
 create policy "og read" on online_games for select using (true);
 
-create or replace function og_create(p_code text, p_host_id bigint, p_host_name text, p_main int, p_inc int, p_ranked boolean)
+drop function if exists og_create(text,bigint,text,int,int,boolean);
+create or replace function og_create(p_code text, p_host_id bigint, p_host_name text, p_main int, p_inc int, p_ranked boolean, p_host_color text)
 returns online_games language plpgsql security definer as $$
 declare g online_games;
 begin
-  insert into online_games(code, host_id, host_name, time_main, time_inc, ranked, host_ms, guest_ms)
-  values (p_code, p_host_id, p_host_name, p_main, p_inc, p_ranked,
+  insert into online_games(code, host_id, host_name, time_main, time_inc, ranked, host_color, host_ms, guest_ms)
+  values (p_code, p_host_id, p_host_name, p_main, p_inc, p_ranked, coalesce(p_host_color,'black'),
           case when p_main>0 then p_main*1000 end, case when p_main>0 then p_main*1000 end)
   returning * into g;
   return g;
@@ -524,16 +527,18 @@ end; $$;
 create or replace function og_move(p_id bigint, p_player_id bigint, p_r int, p_c int,
    p_end text, p_winner_id bigint, p_result text)
 returns online_games language plpgsql security definer as $$
-declare g online_games; cur bigint; elapsed int;
+declare g online_games; cur bigint; elapsed int; host_move boolean;
 begin
   select * into g from online_games where id = p_id;
   if g.id is null then raise exception '대국을 찾을 수 없어요.'; end if;
   if g.status <> 'playing' then raise exception '진행 중인 대국이 아니에요.'; end if;
-  cur := case when g.turn='black' then g.host_id else g.guest_id end;
+  -- 현재 차례가 방장인가? (turn=black 이면서 방장색=black 이거나, turn=white 이면서 방장색=white)
+  host_move := (g.turn = g.host_color);
+  cur := case when host_move then g.host_id else g.guest_id end;
   if p_player_id <> cur then raise exception '당신 차례가 아니에요.'; end if;
   if g.time_main > 0 then
     elapsed := (extract(epoch from (now() - coalesce(g.last_move_at, now())))*1000)::int;
-    if g.turn='black' then g.host_ms := greatest(0, g.host_ms - elapsed + g.time_inc*1000);
+    if host_move then g.host_ms := greatest(0, g.host_ms - elapsed + g.time_inc*1000);
     else g.guest_ms := greatest(0, g.guest_ms - elapsed + g.time_inc*1000); end if;
   end if;
   update online_games set
@@ -564,10 +569,33 @@ begin
   return found;
 end; $$;
 
-grant execute on function og_create(text,bigint,text,int,int,boolean) to anon, authenticated;
+-- 재대국: 두 명 모두 요청하면 색 교대해서 재시작
+create or replace function og_rematch(p_id bigint, p_player bigint)
+returns online_games language plpgsql security definer as $$
+declare g online_games;
+begin
+  select * into g from online_games where id = p_id;
+  if g.id is null then raise exception '대국을 찾을 수 없어요.'; end if;
+  if g.status <> 'done' then return g; end if;
+  if g.rematch_offer is not null and g.rematch_offer <> p_player then   -- 상대가 이미 요청 -> 재시작
+    update online_games set
+      moves='[]'::jsonb, turn='black', winner_id=null, result=null, status='playing',
+      host_color = case when host_color='black' then 'white' else 'black' end,   -- 색 교대
+      host_ms = case when time_main>0 then time_main*1000 end,
+      guest_ms = case when time_main>0 then time_main*1000 end,
+      last_move_at=now(), recorded=false, rematch_offer=null, updated_at=now()
+    where id=p_id returning * into g;
+  else
+    update online_games set rematch_offer=p_player, updated_at=now() where id=p_id returning * into g;
+  end if;
+  return g;
+end; $$;
+
+grant execute on function og_create(text,bigint,text,int,int,boolean,text) to anon, authenticated;
 grant execute on function og_join(text,bigint,text)                   to anon, authenticated;
 grant execute on function og_move(bigint,bigint,int,int,text,bigint,text) to anon, authenticated;
 grant execute on function og_finish(bigint,bigint,text)               to anon, authenticated;
 grant execute on function og_claim_record(bigint)                     to anon, authenticated;
+grant execute on function og_rematch(bigint,bigint)                   to anon, authenticated;
 
 do $$ begin alter publication supabase_realtime add table online_games; exception when others then null; end $$;

@@ -170,6 +170,18 @@
   .online-players { display:flex; gap:10px; margin-bottom:12px; }
   .online-players .pl-card { flex:1; }
   #olBoard .rgrid { touch-action:manipulation; }
+  .chat { max-height:120px; overflow-y:auto; background:#fff7ec; border-radius:12px; padding:8px 10px; margin-top:12px;
+    font-size:13.5px; display:flex; flex-direction:column; gap:4px; }
+  .chat:empty { display:none; }
+  .chat-line { align-self:flex-start; background:#fff; border-radius:10px; padding:5px 9px; max-width:80%; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .chat-line.mine { align-self:flex-end; background:#ffe6cc; }
+  .chat-line b { color:var(--orange-deep); font-size:11px; display:block; }
+  .chat-presets { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .chat-presets button { border:1px solid #f0e5d8; background:#fffdf9; border-radius:999px; padding:5px 10px;
+    font-size:12.5px; cursor:pointer; }
+  .chat-input { display:flex; gap:6px; margin-top:8px; }
+  .chat-input input { flex:1; padding:9px 12px; font-size:14px; border:2px solid #f0e5d8; border-radius:10px; background:#fffdf9; }
+  .chat-input .mini-btn { margin-top:0; flex:none; width:auto; padding:9px 14px; }
   .rotate-hint { text-align:center; font-size:12.5px; color:#8a6d1a; background:#fff3d6;
     border:1px solid #ffdd8f; border-radius:10px; padding:7px 10px; margin:0 0 10px; }
   .players { display:flex; gap:10px; margin-bottom:12px; }
@@ -1643,7 +1655,7 @@ async function tryResume(id){
     const { data } = await sb.from("online_games").select("*").eq("id", id).single();
     if(data && data.status !== "done" && (data.host_id===onlineMe.id || data.guest_id===onlineMe.id)){
       og = { id:data.id, code:data.code, role: data.host_id===onlineMe.id?"host":"guest",
-             myColor: data.host_id===onlineMe.id?Omok.BLACK:Omok.WHITE, row:data };
+             myColor: myOnlineColor(data), row:data };
       ogSubscribe(data.id);
       if(data.status==="waiting") renderOnlineWaiting(data.code); else startOnlineBoard(data);
       return;
@@ -1681,24 +1693,33 @@ function renderOnlineHome(){
 function renderOnlineCreate(){
   $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
     <h2>➕ 방 만들기</h2>
+    <label>내 돌 (선/후 선택)</label>
+    <select id="olColor"><option value="black">⚫ 흑 (선공·먼저)</option><option value="white">⚪ 백 (후공)</option><option value="random">🎲 랜덤</option></select>
     <label>제한시간</label>
     <select id="olTime"><option value="0,0">무제한</option><option value="600,0">10분</option><option value="300,0">5분</option><option value="180,2">3분+2초</option></select>
     <label>방식</label>
-    <select id="olRanked"><option value="1">랭킹전</option><option value="0">친선전</option></select>
+    <select id="olRanked"><option value="1">🏆 랭킹전 (LP·포인트 반영)</option><option value="0">🤝 친선전 (미반영)</option></select>
     <button class="btn btn-primary" style="margin-top:14px" onclick="onlineCreate()">방 만들기</button>
     <button class="mini-btn" style="margin-top:10px" onclick="renderOnlineHome()">← 뒤로</button>`;
+}
+function myOnlineColor(row){
+  const hostColor = row.host_color==="white" ? Omok.WHITE : Omok.BLACK;
+  const iAmHost = row.host_id===onlineMe.id;
+  return iAmHost ? hostColor : (hostColor===Omok.BLACK?Omok.WHITE:Omok.BLACK);
 }
 async function onlineCreate(){
   const [main,inc] = document.getElementById("olTime").value.split(",").map(Number);
   const ranked = document.getElementById("olRanked").value==="1";
+  let color = document.getElementById("olColor").value;
+  if(color==="random") color = Math.random()<0.5 ? "black" : "white";
   let row=null;
   for(let i=0;i<6 && !row;i++){
     const code = String(Math.floor(1000+Math.random()*9000));
-    const { data, error } = await sb.rpc("og_create",{p_code:code,p_host_id:onlineMe.id,p_host_name:onlineMe.name,p_main:main,p_inc:inc,p_ranked:ranked});
+    const { data, error } = await sb.rpc("og_create",{p_code:code,p_host_id:onlineMe.id,p_host_name:onlineMe.name,p_main:main,p_inc:inc,p_ranked:ranked,p_host_color:color});
     if(!error) row=data; else if(!/duplicate|unique/i.test(error.message)){ alert(error.message); return; }
   }
   if(!row){ alert("방 코드 생성 실패, 다시 시도하세요."); return; }
-  og = { id:row.id, code:row.code, role:"host", myColor:Omok.BLACK, row };
+  og = { id:row.id, code:row.code, role:"host", myColor:myOnlineColor(row), row };
   localStorage.setItem("og_active", row.id);
   ogSubscribe(row.id); renderOnlineWaiting(row.code);
 }
@@ -1726,27 +1747,39 @@ async function onlineJoin(){
   try {
     const { data, error } = await sb.rpc("og_join",{p_code:code,p_guest_id:onlineMe.id,p_guest_name:onlineMe.name});
     if(error) throw new Error(error.message);
-    og = { id:data.id, code:data.code, role:"guest", myColor:Omok.WHITE, row:data };
+    og = { id:data.id, code:data.code, role:"guest", myColor:myOnlineColor(data), row:data };
     localStorage.setItem("og_active", data.id);
     ogSubscribe(data.id); startOnlineBoard(data);
   } catch(e){ alert(e.message); }
 }
 function ogSubscribe(id){
   ogUnsub();
-  ogChannel = sb.channel("og-"+id)
+  ogChannel = sb.channel("og-"+id, { config:{ broadcast:{ self:false } } })
     .on("postgres_changes",{event:"UPDATE",schema:"public",table:"online_games",filter:"id=eq."+id}, p=>onOgUpdate(p.new))
+    .on("broadcast",{event:"chat"}, p=>onChatMsg(p.payload))
     .subscribe();
 }
 function ogUnsub(){ if(ogChannel){ sb.removeChannel(ogChannel); ogChannel=null; } if(ogClockTimer){ clearInterval(ogClockTimer); ogClockTimer=null; } }
 function onOgUpdate(row){
   if(!og || row.id!==og.id) return;
+  const prev = og.row ? og.row.status : null;
   og.row = row;
-  if(!document.getElementById("olBoard") && row.status!=="waiting") startOnlineBoard(row);
-  else renderOnlineBoard(row);
-  if(row.status==="done") onlineGameOver(row);
+  og.role = row.host_id===onlineMe.id ? "host" : "guest";
+  og.myColor = myOnlineColor(row);
+  const boardShown = !!document.getElementById("olBoard");
+  if(row.status!=="waiting" && (!boardShown || (prev==="done" && row.status==="playing"))){
+    startOnlineBoard(row);              // 최초 시작 또는 재대국 시작
+    return;
+  }
+  renderOnlineBoard(row);
+  if(row.status==="done"){
+    if(prev!=="done") onlineGameOver(row);
+    else updateRematchBtn(row);         // 상대가 재대국 요청 등
+  }
 }
 function startOnlineBoard(row){
-  og.row = row;
+  og.row = row; og.myColor = myOnlineColor(row);
+  localStorage.setItem("og_active", row.id);
   const oppName = og.role==="host" ? (row.guest_name||"상대") : row.host_name;
   const meColor = og.myColor===Omok.BLACK?"⚫흑":"⚪백", oppColor = og.myColor===Omok.BLACK?"⚪백":"⚫흑";
   $ob().innerHTML = `<span class="close-x" onclick="onlineLeave()">✕</span>
@@ -1756,7 +1789,18 @@ function startOnlineBoard(row){
     </div>
     <div class="board-wrap"><div id="olBoard"></div></div>
     <div class="game-msg" id="olMsg"></div>
-    <div class="game-btns"><button class="btn btn-ghost" id="olResign" onclick="onlineResign()">🏳️ 기권</button></div>`;
+    <div class="game-btns">
+      <button class="btn btn-primary" id="olRematch" style="display:none" onclick="onlineRematch()">🔄 색 바꿔 한 판 더</button>
+      <button class="btn btn-ghost" id="olResign" onclick="onlineResign()">🏳️ 기권</button>
+    </div>
+    <div class="chat" id="olChat"></div>
+    <div class="chat-presets">
+      <button onclick="sendChat('안녕! 👋')">안녕👋</button>
+      <button onclick="sendChat('잘했어! 👍')">잘했어👍</button>
+      <button onclick="sendChat('좋아 🔥')">좋아🔥</button>
+      <button onclick="sendChat('GG 🤝')">GG🤝</button>
+    </div>
+    <div class="chat-input"><input id="olChatText" maxlength="60" placeholder="메시지 입력…" onkeydown="if(event.key==='Enter')sendChat()"><button class="mini-btn" onclick="sendChat()">전송</button></div>`;
   renderOnlineBoard(row);
   if(row.time_main>0 && !ogClockTimer) ogClockTimer = setInterval(updateOnlineClock, 250);
 }
@@ -1765,15 +1809,25 @@ function ogBoardFromMoves(moves){
   moves.forEach((m,i)=> b[m[0]][m[1]] = i%2===0 ? Omok.BLACK : Omok.WHITE);
   return b;
 }
+function stoneStyle(st){
+  return `background:radial-gradient(circle at 35% 32%, ${st.in}, ${st.out});` + (st.glow?`box-shadow:0 0 6px ${st.glow};`:"border:1px solid rgba(0,0,0,.15);");
+}
 function renderOnlineBoard(row){
   const el = document.getElementById("olBoard"); if(!el) return;
   const N = Omok.N, b = ogBoardFromMoves(row.moves);
   const last = row.moves.length ? row.moves[row.moves.length-1] : null;
   const myTurn = row.status==="playing" && (row.turn==="black"?Omok.BLACK:Omok.WHITE)===og.myColor;
-  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,380px)">`;
+  // 구입 스킨 연동 (#4): 흑/백 플레이어의 장착 스킨
+  const blackId = row.host_color==="black"?row.host_id:row.guest_id;
+  const whiteId = row.host_color==="black"?row.guest_id:row.host_id;
+  const bp = students.find(s=>s.id===blackId), wp = students.find(s=>s.id===whiteId);
+  const boardSkin = (bp && hasCustomBoard(bp) && SHOP[bp.equip_board] && SHOP[bp.equip_board].data)
+                 || (wp && hasCustomBoard(wp) && SHOP[wp.equip_board] && SHOP[wp.equip_board].data) || DEFAULT_BOARD;
+  const stB = resolveStone(bp?bp.equip_stone:null,"black"), stW = resolveStone(wp?wp.equip_stone:null,"white");
+  let h = `<div class="rgrid romok" style="grid-template-columns:repeat(${N},1fr);grid-template-rows:repeat(${N},1fr);aspect-ratio:1;width:min(88vmin,380px);background:${boardSkin.bg}">`;
   for(let r=0;r<N;r++) for(let c=0;c<N;c++){
     const isLast = last && last[0]===r && last[1]===c;
-    const inner = b[r][c] ? `<span class="rstone ${b[r][c]===1?'bk':'wt'}"></span>` : "";
+    const inner = b[r][c] ? `<span class="rstone" style="${stoneStyle(b[r][c]===Omok.BLACK?stB:stW)}"></span>` : "";
     h += `<div class="rsq${isLast?' rlast':''}" onclick="onlineClick(${r},${c})">${inner}</div>`;
   }
   el.innerHTML = h + `</div>`;
@@ -1810,7 +1864,6 @@ async function onlineResign(){
 }
 async function onlineGameOver(row){
   if(ogClockTimer){ clearInterval(ogClockTimer); ogClockTimer=null; }
-  localStorage.removeItem("og_active");
   const msg = document.getElementById("olMsg");
   if(msg){
     let txt;
@@ -1819,6 +1872,7 @@ async function onlineGameOver(row){
     msg.innerHTML = `<b>${txt}</b>`;
   }
   const rb = document.getElementById("olResign"); if(rb){ rb.textContent="나가기"; rb.onclick=onlineLeave; }
+  updateRematchBtn(row);
   try {
     const { data: claimed } = await sb.rpc("og_claim_record",{p_id:row.id});   // 결과·복기 1회만 기록
     if(claimed){
@@ -1835,21 +1889,54 @@ async function onlineGameOver(row){
 function onlineLeave(){
   og=null; ogUnsub(); localStorage.removeItem("og_active"); closeModal("onlineBack");
 }
+// ---- 재대국(#2) ----
+async function onlineRematch(){
+  if(!og || !og.row || og.row.status!=="done") return;
+  const { data, error } = await sb.rpc("og_rematch",{p_id:og.id,p_player:onlineMe.id});
+  if(error){ alert(error.message); return; }
+  og.row=data;
+  if(data.status==="playing") startOnlineBoard(data); else updateRematchBtn(data);
+}
+function updateRematchBtn(row){
+  const rb = document.getElementById("olRematch"); if(!rb) return;
+  rb.style.display="block"; rb.disabled=false;
+  if(row.rematch_offer===onlineMe.id){ rb.textContent="⏳ 상대 수락 대기중…"; rb.disabled=true; }
+  else if(row.rematch_offer){ rb.textContent="🔄 상대가 원해요 — 수락!"; }
+  else rb.textContent="🔄 색 바꿔 한 판 더";
+}
+// ---- 채팅(#5) ----
+function sendChat(preset){
+  const inp = document.getElementById("olChatText");
+  const text = (preset || (inp?inp.value:"")).trim();
+  if(!text || !ogChannel) return;
+  ogChannel.send({ type:"broadcast", event:"chat", payload:{ name:onlineMe.name, text } });
+  addChatLine(onlineMe.name, text, true);
+  if(inp && !preset) inp.value="";
+}
+function onChatMsg(p){ if(p) addChatLine(p.name, p.text, false); }
+function addChatLine(name, text, mine){
+  const el = document.getElementById("olChat"); if(!el) return;
+  const d = document.createElement("div");
+  d.className = "chat-line" + (mine?" mine":"");
+  d.innerHTML = `<b>${esc(name)}</b> ${esc(text)}`;
+  el.appendChild(d); el.scrollTop = el.scrollHeight;
+}
 function updateOnlineClock(){
   const row = og && og.row; if(!row || row.time_main<=0) return;
   const meEl = document.getElementById("olClkMe"), oppEl = document.getElementById("olClkOpp"); if(!meEl) return;
   const now = Date.now();
   const lastAt = row.last_move_at ? new Date(row.last_move_at).getTime() : now;
-  const turnIsHost = row.turn==="black";
+  const hostToMove = (row.turn === row.host_color);   // 현재 차례가 방장인가
   let hostMs = row.host_ms, guestMs = row.guest_ms;
-  if(row.status==="playing"){ if(turnIsHost) hostMs -= (now-lastAt); else guestMs -= (now-lastAt); }
-  const myMs = og.role==="host"?hostMs:guestMs, oppMs = og.role==="host"?guestMs:hostMs;
+  if(row.status==="playing"){ if(hostToMove) hostMs -= (now-lastAt); else guestMs -= (now-lastAt); }
+  const iAmHost = og.role==="host";
+  const myMs = iAmHost?hostMs:guestMs, oppMs = iAmHost?guestMs:hostMs;
   meEl.textContent = "⏱ "+fmtClock(Math.max(0,myMs)); oppEl.textContent = "⏱ "+fmtClock(Math.max(0,oppMs));
-  const myTurn = (turnIsHost===(og.role==="host")) && row.status==="playing";
+  const myTurn = (hostToMove===iAmHost) && row.status==="playing";
   meEl.classList.toggle("run", myTurn); oppEl.classList.toggle("run", !myTurn && row.status==="playing");
   meEl.classList.toggle("low", myMs<=10000);
-  if(row.status==="playing" && (turnIsHost?hostMs:guestMs) <= 0){   // 시간패 -> 상대 승
-    const winner = turnIsHost ? row.guest_id : row.host_id;
+  if(row.status==="playing" && (hostToMove?hostMs:guestMs) <= 0){   // 시간패 -> 상대 승
+    const winner = hostToMove ? row.guest_id : row.host_id;
     sb.rpc("og_finish",{p_id:row.id,p_winner_id:winner,p_result:"timeout"});
   }
 }
