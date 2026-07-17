@@ -239,6 +239,10 @@
   .pl-card .stone { font-size:20px; } .pl-card .pn { font-weight:800; font-size:15px; margin-top:2px; }
   .clk { font-weight:800; font-size:17px; margin-top:3px; color:var(--sub); font-variant-numeric:tabular-nums; }
   .clk:empty { display:none; }
+  /* AI 말풍선 — AI가 왜 그 수를 뒀는지 알려준다 (연습 모드) */
+  .ai-say { display:none; text-align:center; font-weight:700; font-size:13px; color:#6c3fd0;
+    background:#f4eeff; border:2px solid #e0d2ff; border-radius:12px; padding:7px 12px; margin:8px 0 0; }
+  .ai-say.on { display:block; }
   .clk.run { color:var(--orange-deep); }
   .clk.low { color:#e03131; }
   .board-wrap { display:flex; justify-content:center; }
@@ -258,6 +262,7 @@
       grid-template-columns:auto minmax(170px, 280px);
       grid-template-areas:
         "board players"
+        "board say"
         "board msg"
         "board opts"
         "board btns"
@@ -265,6 +270,7 @@
       justify-content:center; align-items:start; gap:8px 24px;
     }
     #gameArea.active .board-wrap { grid-area:board; }
+    #gameArea.active .ai-say    { grid-area:say; margin:0; }
     #gameArea.active .players   { grid-area:players; flex-direction:column; gap:8px; margin:0; }
     #gameArea.active .game-msg  { grid-area:msg; margin:4px 0; }
     #gameArea.active .opts      { grid-area:opts; flex-direction:column; gap:10px; margin:2px 0; }
@@ -401,6 +407,7 @@
   <!-- 오목 화면 -->
   <div id="playView">
     <div id="gameSetup">
+      <button class="btn" id="aiBtn" style="margin-bottom:8px;background:linear-gradient(135deg,#a77bff,#ff8a3d);color:#fff" onclick="openAI()">🤖 AI와 연습 대국 — 혼자서 실력 쌓기</button>
       <button class="btn" id="onlineBtn" style="margin-bottom:12px;background:linear-gradient(135deg,#5b8dff,#37b3a6);color:#fff" onclick="openOnline()">🌐 온라인 대국 — 집에서 친구랑 실시간 (오목)</button>
       <div class="gtype">
         <button class="gt active" id="modeRanked" onclick="setMatchMode('ranked')">🏆 랭킹전</button>
@@ -434,6 +441,7 @@
         <div class="pl-card" id="plBlack"><div class="stone">⚫</div><div class="pn" id="pnBlack">흑</div><div class="clk" id="clkBlack"></div></div>
         <div class="pl-card" id="plWhite"><div class="stone">⚪</div><div class="pn" id="pnWhite">백</div><div class="clk" id="clkWhite"></div></div>
       </div>
+      <div class="ai-say" id="aiSay"></div>
       <div class="rotate-hint">📱↔️ 태블릿을 <b>가로로</b> 돌리면 더 크게 볼 수 있어요</div>
       <div class="board-wrap"><canvas id="board"></canvas></div>
       <div class="opts">
@@ -544,6 +552,9 @@
 <!-- 오목 배우기(커리큘럼) -->
 <div class="modal-back" id="lessonBack"><div class="modal" id="lessonBody"></div></div>
 
+<!-- AI 연습 대국 -->
+<div class="modal-back" id="aiBack"><div class="modal" id="aiBody"></div></div>
+
 <div id="promoPicker" class="promo-picker">
   <div class="promo-title">♟️ 승격할 기물을 고르세요</div>
   <div class="promo-opts">
@@ -560,6 +571,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="omok.js"></script>
 <script src="omok_coach.js"></script>
+<script src="omok_ai.js"></script>
 <script src="chess.js"></script>
 <script src="janggi.js"></script>
 <script>
@@ -1319,9 +1331,10 @@ async function startGame() {
   finally { btn.disabled = false; btn.textContent = "🔒 확인하고 대국 시작!"; }
 }
 
-function beginGame(black, white, boardOwner) {
+function beginGame(black, white, boardOwner, ai) {
   game = { board: Omok.createBoard(), turn: Omok.BLACK, over: false, history: [], black, white,
-           boardOwner, ranked: gameRanked, skins: resolveGameSkins(black, white, boardOwner) };
+           boardOwner, ranked: ai ? false : gameRanked, ai: ai || null,
+           skins: resolveGameSkins(black, white, boardOwner) };
   document.getElementById("gameSetup").style.display = "none";
   document.getElementById("gameArea").classList.add("active");
   document.getElementById("pnBlack").textContent = black.name;
@@ -1331,6 +1344,13 @@ function beginGame(black, white, boardOwner) {
   document.getElementById("optSound").checked = settings.sound;
   sizeBoard(); draw(); updateTurnUI();
   document.getElementById("gameMsg").textContent = "";
+  aiSay("");
+  if(ai){   // 연습 대국은 시계를 쓰지 않는다 (AI가 생각하는 시간까지 재게 되니 의미가 없다)
+    clockStop();
+    [ "clkBlack", "clkWhite" ].forEach(id => document.getElementById(id).textContent = "");
+    if(game.turn === ai.color) scheduleAI();
+    return;
+  }
   clockStart([Omok.BLACK, Omok.WHITE], Omok.BLACK, { [Omok.BLACK]:"clkBlack", [Omok.WHITE]:"clkWhite" },
     (loser) => { quickToast(`⏱️ ${(loser===Omok.BLACK?game.black:game.white).name} 님 시간 초과!`);
                  endGame(loser===Omok.BLACK?Omok.WHITE:Omok.BLACK); });
@@ -1338,6 +1358,7 @@ function beginGame(black, white, boardOwner) {
 
 function replayGame() {
   if(!game) return;
+  if(game.ai){ aiSetup.myColor = game.ai.color; startAIGame(); return; }   // 색 교대 = 이번엔 내가 AI가 뒀던 색
   beginGame(game.white, game.black);  // 색 교대
 }
 
@@ -1353,7 +1374,7 @@ function toggleSound() {
 }
 
 function resetGame() {
-  clockStop();
+  clockStop(); clearTimeout(aiTimer);
   game = null; chessGame = null; janggiGame = null;
   document.getElementById("gameSetup").style.display = "block";
   document.getElementById("gameArea").classList.remove("active");
@@ -1365,7 +1386,8 @@ function updateTurnUI() {
   const bTurn = game.turn === Omok.BLACK;
   document.getElementById("plBlack").classList.toggle("turn", bTurn && !game.over);
   document.getElementById("plWhite").classList.toggle("turn", !bTurn && !game.over);
-  document.getElementById("undoBtn").disabled = game.history.length === 0 || game.over;
+  document.getElementById("undoBtn").disabled = game.history.length === 0 || game.over
+    || !!(game.ai && game.ai.thinking);
 }
 
 function draw() {
@@ -1420,6 +1442,7 @@ function getCSS(v){ return getComputedStyle(document.documentElement).getPropert
 
 canvas.addEventListener("click", (e) => {
   if(!game || game.over) return;
+  if(game.ai && (game.ai.thinking || game.turn === game.ai.color)) return;   // AI 차례엔 사람이 못 둔다
   const rect = canvas.getBoundingClientRect();
   const x = e.clientX - rect.left, y = e.clientY - rect.top;
   const c = Math.round((x-PAD)/CELL), r = Math.round((y-PAD)/CELL);
@@ -1445,10 +1468,22 @@ function tryMove(r,c) {
   draw();   // 턴을 넘긴 뒤 그려야 금수 표시(흑 전용)가 백 차례에 남지 않음
   updateTurnUI();
   clockSwitch(game.turn);
+  if(game.ai && game.turn === game.ai.color) scheduleAI();
 }
 
 function undoMove() {
   if(!game || game.over || !game.history.length) return;
+  if(game.ai){
+    if(game.ai.thinking) return;
+    clearTimeout(aiTimer);
+    // 내 수만 무르면 바로 AI 차례가 되어 무른 의미가 없다 → AI 수까지 같이 무른다
+    const n = Math.min(game.turn === game.ai.color ? 1 : 2, game.history.length);
+    for(let i=0;i<n;i++){ const m = game.history.pop(); game.board[m.r][m.c] = Omok.EMPTY; }
+    game.turn = game.history.length % 2 === 0 ? Omok.BLACK : Omok.WHITE;   // 흑이 먼저 두니 짝수면 흑 차례
+    aiSay(""); draw(); updateTurnUI();
+    if(game.turn === game.ai.color) scheduleAI();   // 내가 백인데 전부 무른 경우 = AI가 다시 첫 수
+    return;
+  }
   const last = game.history.pop();
   game.board[last.r][last.c] = Omok.EMPTY;
   game.turn = game.turn===Omok.BLACK ? Omok.WHITE : Omok.BLACK;
@@ -1463,12 +1498,13 @@ function flashMsg(text){
 
 async function endGame(color) {
   game.over = true; clockStop(); updateTurnUI(); draw();
-  sfx.win(); confetti();
   document.getElementById("replayBtn").style.display = "block";
   const winner = color===Omok.BLACK ? game.black : game.white;
   const loser  = color===Omok.BLACK ? game.white : game.black;
   const moves = game.history.map(h => [h.r, h.c]);
   const msg = document.getElementById("gameMsg");
+  if(game.ai){ endAIGame(color === game.ai.color ? "l" : "w", moves, msg); return; }
+  sfx.win(); confetti();
   if(!game.ranked){
     saveGameRecord("omok", game.black, game.white, winner.id, "win", moves, { ranked:false });
     msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · ${friendlyWhy()}`; return;
@@ -1490,7 +1526,9 @@ function endDraw() {
   game.over = true; clockStop(); updateTurnUI(); draw();
   sfx.draw();
   document.getElementById("replayBtn").style.display = "block";
-  saveGameRecord("omok", game.black, game.white, null, "draw", game.history.map(h => [h.r, h.c]), { ranked: game.ranked });
+  const moves = game.history.map(h => [h.r, h.c]);
+  if(game.ai){ endAIGame("d", moves, document.getElementById("gameMsg")); return; }
+  saveGameRecord("omok", game.black, game.white, null, "draw", moves, { ranked: game.ranked });
   document.getElementById("gameMsg").innerHTML = `🤝 무승부! 판이 가득 찼어요 (점수 변동 없음)`;
 }
 
@@ -1502,6 +1540,131 @@ document.querySelectorAll(".modal-back").forEach(b=>{
 function refitBoard(){ if(game){ sizeBoard(); draw(); } }
 window.addEventListener("resize", refitBoard);
 window.addEventListener("orientationchange", ()=> setTimeout(refitBoard, 250));
+
+// ==================== AI 연습 대국 ====================
+/* 혼자 연습하는 모드. 랭킹·포인트·경기기록 어디에도 반영하지 않는다(연습으로 점수를 벌 수 없게).
+ * AI의 수는 omok_ai.js 가 고르고, 여기서는 화면·차례 관리만 한다. */
+const AI_LEVELS = [
+  { key:"easy",   emoji:"🐣", name:"초급", desc:"이제 막 배운 친구예요. 5목 막는 걸 가끔 깜빡해요." },
+  { key:"normal", emoji:"🐤", name:"중급", desc:"사삼·삼삼 같은 이중위협을 만들고 막을 줄 알아요." },
+  { key:"hard",   emoji:"🦅", name:"고급", desc:"4로 몰아가는 수읽기(VCF)까지 해요. 이기면 진짜 실력자!" },
+];
+const aiLevel = (k) => AI_LEVELS.find(L => L.key === k) || AI_LEVELS[1];
+let aiSetup = { level:"normal", myColor:Omok.BLACK };
+let aiTimer = null, aiLastGame = null;
+
+// 레벨별 전적은 기기에 저장한다 (서버에 남기면 연습이 랭킹처럼 보인다)
+function aiRecord(){ try { return JSON.parse(localStorage.getItem("omok_ai_record") || "{}"); } catch(e){ return {}; } }
+function aiRecordAdd(level, result){
+  const rec = aiRecord(), r = rec[level] || { w:0, l:0, d:0 };
+  r[result]++; rec[level] = r;
+  localStorage.setItem("omok_ai_record", JSON.stringify(rec));
+}
+function aiRecordText(level){
+  const r = aiRecord()[level];
+  if(!r || !(r.w + r.l + r.d)) return "첫 도전!";
+  return `${r.w}승 ${r.l}패${r.d ? ` ${r.d}무` : ""}`;
+}
+
+function openAI(){ renderAI(); openModal("aiBack"); }
+function setAILevel(k){ aiSetup.level = k; renderAI(); }
+function setAIColor(c){ aiSetup.myColor = c; renderAI(); }
+function renderAI(){
+  const cur = aiLevel(aiSetup.level);
+  const btns = AI_LEVELS.map(L => `
+    <button class="gt ${aiSetup.level===L.key ? "active" : ""}" style="flex-direction:column;padding:9px 4px;line-height:1.35"
+            onclick="setAILevel('${L.key}')">
+      <div style="font-size:19px">${L.emoji}</div><div>${L.name}</div>
+      <div style="font-size:10.5px;opacity:.75">${aiRecordText(L.key)}</div>
+    </button>`).join("");
+  document.getElementById("aiBody").innerHTML = `
+    <span class="close-x" onclick="closeModal('aiBack')">✕</span>
+    <h2>🤖 AI와 연습 대국</h2>
+    <div class="tg-note" style="margin:0 0 12px">혼자서 마음껏 연습해요! 판이 끝나면 <b>바로 복기</b>로 배울 수 있어요.</div>
+    <label style="font-size:13px;color:var(--sub);font-weight:700">난이도</label>
+    <div class="gtype" style="margin:6px 0 2px">${btns}</div>
+    <div class="setup-note" style="margin:0 0 14px">${cur.emoji} <b>${cur.name}</b> — ${cur.desc}</div>
+    <label style="font-size:13px;color:var(--sub);font-weight:700">내 돌</label>
+    <div class="gtype" style="margin:6px 0 14px">
+      <button class="gt ${aiSetup.myColor===Omok.BLACK ? "active" : ""}" onclick="setAIColor(${Omok.BLACK})">⚫ 흑 (내가 먼저)</button>
+      <button class="gt ${aiSetup.myColor===Omok.WHITE ? "active" : ""}" onclick="setAIColor(${Omok.WHITE})">⚪ 백 (AI가 먼저)</button>
+    </div>
+    <button class="btn btn-primary" onclick="startAIGame()">🤖 연습 시작!</button>
+    <div class="setup-note">연습 대국은 <b>랭킹·포인트에 반영되지 않아요</b> · 정식 렌주룰</div>`;
+}
+
+function startAIGame(){
+  const me = onlineMe ? students.find(s => s.id === onlineMe.id) : null;   // 로그인해 뒀으면 내 이름·스킨으로 둔다
+  const myS = me || { id:-1, name: onlineMe ? onlineMe.name : "나" };
+  const L = aiLevel(aiSetup.level);
+  const aiS = { id:-2, name:`${L.emoji} AI ${L.name}` };
+  const iAmBlack = aiSetup.myColor === Omok.BLACK;
+  closeModal("aiBack");
+  beginGame(iAmBlack ? myS : aiS, iAmBlack ? aiS : myS,
+            (me && hasCustomBoard(me)) ? me : null,
+            { level: aiSetup.level, color: iAmBlack ? Omok.WHITE : Omok.BLACK, thinking:false, myId: myS.id });
+}
+
+function aiSay(text){
+  const el = document.getElementById("aiSay"); if(!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("on", !!text);
+}
+
+function scheduleAI(){
+  if(!game || !game.ai || game.over) return;
+  game.ai.thinking = true;
+  updateTurnUI(); aiSay("🤔 생각 중…");
+  clearTimeout(aiTimer);
+  aiTimer = setTimeout(runAI, 450);   // 즉답하면 사람이 따라가기 어렵다 — 잠깐 뜸을 들인다
+}
+function runAI(){
+  if(!game || !game.ai || game.over) return;
+  const g = game;
+  let mv = null;
+  try { mv = OmokAI.chooseMove(g.board, g.ai.color, g.ai.level); }
+  catch(e){ console.error("AI 오류", e); }
+  if(!mv) mv = { at: aiFallback(g.board, g.ai.color), why: null };
+  g.ai.thinking = false;
+  if(!mv.at){ endDraw(); return; }
+  tryMove(mv.at[0], mv.at[1]);
+  if(game === g && !g.over) aiSay(mv.why || "");
+}
+// AI가 수를 못 내는 일은 없어야 하지만, 그래도 판이 멈추는 것보단 아무 데나 두는 게 낫다
+function aiFallback(board, col){
+  for(let r=0;r<Omok.N;r++) for(let c=0;c<Omok.N;c++){
+    if(board[r][c] !== Omok.EMPTY) continue;
+    if(!Omok.analyze(board, r, c, col).forbidden) return [r,c];
+  }
+  return null;
+}
+
+function endAIGame(result, moves, msg){
+  const L = aiLevel(game.ai.level);
+  const iWon = result === "w";
+  if(iWon){ sfx.win(); confetti(); } else sfx.draw();
+  aiRecordAdd(game.ai.level, result);
+  aiSay(iWon ? "졌다… 너 잘하는데? 😮" : result === "d" ? "비겼네! 🤝" : "내가 이겼다! 😎");
+  const head = iWon ? `🎉 <b>${L.emoji} AI ${L.name}</b>을(를) 이겼어요! 대단해요!`
+    : result === "d" ? `🤝 무승부! 판이 가득 찼어요.`
+    : `😢 <b>${L.emoji} AI ${L.name}</b>에게 졌어요. 어디서 밀렸는지 복기로 찾아봐요!`;
+  aiLastGame = {
+    game_type: "omok", moves,
+    p1_id: game.black.id, p1_name: game.black.name,
+    p2_id: game.white.id, p2_name: game.white.name,
+    winner_id: result === "d" ? null : (iWon ? (game.ai.color===Omok.BLACK ? game.white.id : game.black.id)
+                                             : (game.ai.color===Omok.BLACK ? game.black.id : game.white.id)),
+    result: result === "d" ? "draw" : "win",
+    _viewerId: game.ai.myId,
+  };
+  msg.innerHTML = `${head} · <span style="font-weight:600">이번 ${L.name} 전적 ${esc(aiRecordText(game.ai.level))}</span>
+    <div style="margin-top:8px"><button class="btn btn-primary" onclick="openAIReview()">📖 이 판 복기하기</button></div>`;
+}
+function openAIReview(){
+  if(!aiLastGame || !aiLastGame.moves.length) return;
+  replayViewerId = aiLastGame._viewerId;
+  showReplay(aiLastGame);
+}
 
 // ==================== 게임 공통 ====================
 let gameType = "omok";
@@ -1587,6 +1750,7 @@ function clockRender(){
 }
 function setGameType(t){
   gameType = t;
+  document.getElementById("aiBtn").style.display = t==="omok" ? "block" : "none";   // AI 연습: 오목만
   const ob = document.getElementById("onlineBtn");   // 온라인: 오목·체스 지원
   ob.style.display = (t==="omok" || t==="chess") ? "block" : "none";
   ob.textContent = `🌐 온라인 대국 — 집에서 친구랑 실시간 (${t==="chess"?"체스":"오목"})`;
@@ -1841,6 +2005,10 @@ function replayRow(g, viewerId){
 }
 function openReplay(gameId){
   const g = replayGames[gameId]; if(!g) return;
+  showReplay(g);
+}
+// 저장된 기록이든 방금 둔 AI 연습 대국이든 같은 화면으로 복기한다
+function showReplay(g){
   review = { game: g, idx: g.moves.length, coach: null, opening: null };
   // 오목이면 전체 수를 미리 분석해 둔다 (수당 ~4ms)
   if(g.game_type === "omok" && window.OmokCoach){
