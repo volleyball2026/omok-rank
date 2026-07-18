@@ -1202,14 +1202,24 @@ function renderShop() {
   document.getElementById("shopPts").textContent = s.points || 0;
   const owned = new Set(s.owned || []);
   const items = Object.values(SHOP).sort((a, b) => a.sort - b.sort);
-  body.innerHTML = attendHtml(s) +
-    shopSection("🎋 바둑판", items.filter(i => i.kind === "board"), s, owned) +
-    shopSection("⚫ 바둑알", items.filter(i => i.kind === "stone"), s, owned) +
-    shopSection("♟️ 체스판", items.filter(i => i.kind === "chessboard"), s, owned) +
-    shopSection("♟️ 체스 기물", items.filter(i => i.kind === "chesspiece"), s, owned) +
-    shopSection("🏯 장기판", items.filter(i => i.kind === "janggiboard"), s, owned) +
-    shopSection("🏯 장기 기물", items.filter(i => i.kind === "janggipiece"), s, owned);
+  // 종목별 탭 (스크롤 대신 오목/체스/장기 전환)
+  if (!SHOP_CATS[shopCat]) shopCat = "omok";
+  const tabBar = `<div class="gtype shop-cat">` +
+    Object.keys(SHOP_CATS).map(c =>
+      `<button class="gt ${shopCat===c?'active':''}" onclick="setShopCat('${c}')">${SHOP_CATS[c].label}</button>`).join("") +
+    `</div>`;
+  const secs = SHOP_CATS[shopCat].secs
+    .map(([title, kind]) => shopSection(title, items.filter(i => i.kind === kind), s, owned)).join("");
+  body.innerHTML = attendHtml(s) + tabBar + secs;
 }
+// 상점 종목 탭 정의
+const SHOP_CATS = {
+  omok:   { label:"⚫ 오목", secs:[["🎋 바둑판","board"], ["⚫ 바둑알","stone"]] },
+  chess:  { label:"♟️ 체스", secs:[["♟️ 체스판","chessboard"], ["♟️ 체스 기물","chesspiece"]] },
+  janggi: { label:"🏯 장기", secs:[["🏯 장기판","janggiboard"], ["🏯 장기 기물","janggipiece"]] },
+};
+let shopCat = "omok";
+function setShopCat(c){ shopCat = c; renderShop(); }
 async function shopLogin(){
   const id = +document.getElementById("shopName").value, pw = document.getElementById("shopPw").value;
   if(!pw){ alert("비밀번호를 입력하세요."); return; }
