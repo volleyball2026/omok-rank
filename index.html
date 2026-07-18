@@ -372,6 +372,11 @@
   .prev-line::before, .prev-line::after { content:""; position:absolute; background:currentColor; opacity:.7; }
   .prev-line::before { left:50%; top:0; bottom:0; width:1.5px; transform:translateX(-50%); }
   .prev-line::after { top:50%; left:0; right:0; height:1.5px; transform:translateY(-50%); }
+  .vic-prev { position:relative; cursor:pointer; overflow:hidden; }
+  .vic-prev .vic-play { position:absolute; bottom:6px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,0.45); color:#fff; font-size:10.5px; font-weight:800; padding:2px 9px; border-radius:999px;
+    opacity:0; transition:opacity .15s; white-space:nowrap; }
+  .vic-prev:hover .vic-play, .vic-prev:active .vic-play { opacity:1; }
 
   /* 컨페티 */
   #confetti { position:fixed; inset:0; width:100%; height:100%; pointer-events:none; z-index:200; display:none; }
@@ -1138,7 +1143,7 @@ function stonePrevStyle(data, side) {
   const glow = d.glow ? `,0 0 9px ${d.glow}` : "";
   return `background:radial-gradient(circle at 35% 32%, ${d.in}, ${d.out});box-shadow:inset -3px -3px 6px rgba(0,0,0,0.25)${glow};`;
 }
-const DEFAULT_ITEM_IDS = new Set(["board_wood","stone_ink","cboard_wood","cpiece_std","jboard_wood","jpiece_std"]);
+const DEFAULT_ITEM_IDS = new Set(["board_wood","stone_ink","cboard_wood","cpiece_std","jboard_wood","jpiece_std","vic_confetti"]);
 function isDefaultItem(it) { return DEFAULT_ITEM_IDS.has(it.id); }
 // 상점 카드 미리보기 (종류별)
 function shopPreview(it){
@@ -1175,6 +1180,20 @@ function shopPreview(it){
       <div style="width:60%;aspect-ratio:1;border-radius:50%;display:flex;align-items:center;justify-content:center;
         font-weight:900;font-size:17px;background:${r.disk};color:${r.text};border:2px solid ${r.border};
         box-shadow:0 1px 2px rgba(0,0,0,.3)${g}">車</div></div>`;
+  }
+  if (it.kind === "victory") {
+    const bg = d.prevBg || "radial-gradient(circle at 50% 40%,#3a4670,#141a33)";
+    const tap = `onclick="previewVictory('${it.id}')" title="눌러서 미리보기"`;
+    let inner;
+    if (d.type === "emoji")
+      inner = `<div style="font-size:24px;letter-spacing:3px">${(d.emojis||["🎉"]).slice(0,3).join("")}</div>`;
+    else if (d.type === "fireworks")
+      inner = `<div style="font-size:30px">${d.rainbow ? "🌈🎆" : "🎆"}</div>`;
+    else
+      inner = `<div style="display:flex;gap:5px">` +
+        ((d.colors)||["#ff8a3d","#ffcf5c","#ff5a5a","#5b8dff","#5cb85c"]).slice(0,5)
+          .map(c=>`<span style="width:9px;height:13px;border-radius:2px;background:${c};display:inline-block;transform:rotate(18deg)"></span>`).join("") + `</div>`;
+    return `<div class="prev vic-prev" style="background:${bg}" ${tap}>${inner}<span class="vic-play">▶ 미리보기</span></div>`;
   }
   return `<div class="prev"></div>`;
 }
@@ -1217,6 +1236,7 @@ const SHOP_CATS = {
   omok:   { label:"⚫ 오목", secs:[["🎋 바둑판","board"], ["⚫ 바둑알","stone"]] },
   chess:  { label:"♟️ 체스", secs:[["♟️ 체스판","chessboard"], ["♟️ 체스 기물","chesspiece"]] },
   janggi: { label:"🏯 장기", secs:[["🏯 장기판","janggiboard"], ["🏯 장기 기물","janggipiece"]] },
+  victory:{ label:"✨ 승리 연출", secs:[["✨ 이기면 나오는 애니메이션 (모든 종목 공통)","victory"]] },
 };
 let shopCat = "omok";
 function setShopCat(c){ shopCat = c; renderShop(); }
@@ -1332,6 +1352,114 @@ function confetti() {
     });
     if (f < 170) requestAnimationFrame(tick);
     else { cx.clearRect(0,0,cv.width,cv.height); cv.style.display = "none"; }
+  })();
+}
+
+// ==================== 승리 애니메이션 스킨 ====================
+// 승자가 장착한 '승리 연출' 스킨을 재생한다. 없으면 기본 컨페티.
+function playVictory(student){
+  const id = student && student.equip_victory;
+  const data = id && SHOP[id] && SHOP[id].data;
+  if(data) runVictoryFx(data); else confetti();
+}
+function previewVictory(id){ const it = SHOP[id]; if(it && it.data) runVictoryFx(it.data); }
+
+let vfxRAF = 0;
+function vfxSetup(){
+  const cv = document.getElementById("confetti"), cx = cv.getContext("2d");
+  cancelAnimationFrame(vfxRAF);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.style.display = "block";
+  cv.width = innerWidth*dpr; cv.height = innerHeight*dpr;
+  cv.style.width = innerWidth+"px"; cv.style.height = innerHeight+"px";
+  cx.setTransform(dpr,0,0,dpr,0,0);
+  return { cx, W: innerWidth, H: innerHeight };
+}
+function vfxEnd(cx, W, H){
+  cx.globalCompositeOperation = "source-over"; cx.globalAlpha = 1;
+  cx.clearRect(0,0,W,H);
+  document.getElementById("confetti").style.display = "none";
+}
+function runVictoryFx(d){
+  const t = (d && d.type) || "confetti";
+  if(t === "emoji")     return emojiFx(d);
+  if(t === "fireworks") return fireworksFx(d);
+  return confettiFx(d);
+}
+// 색종이 (색상 지정 가능)
+function confettiFx(d){
+  const { cx, W, H } = vfxSetup();
+  const colors = (d && d.colors) || ["#ff8a3d","#ffcf5c","#ff5a5a","#5b8dff","#5cb85c","#c9a0ff"];
+  const parts = Array.from({ length: 150 }, () => ({
+    x: W/2 + (Math.random()*2-1)*80, y: H*0.28,
+    vx: (Math.random()*2-1)*7, vy: Math.random()*-10-3, g: 0.24,
+    s: Math.random()*7+4, c: colors[Math.floor(Math.random()*colors.length)],
+    rot: Math.random()*6, vr: (Math.random()*2-1)*0.3,
+  }));
+  let f = 0;
+  (function tick(){
+    cx.clearRect(0,0,W,H); f++;
+    parts.forEach(p => { p.vy += p.g; p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+      cx.save(); cx.translate(p.x,p.y); cx.rotate(p.rot);
+      cx.fillStyle = p.c; cx.fillRect(-p.s/2,-p.s/2,p.s,p.s*0.6); cx.restore(); });
+    if(f < 180) vfxRAF = requestAnimationFrame(tick); else vfxEnd(cx,W,H);
+  })();
+}
+// 이모지 샤워 (motion: fall 위→아래 / rise 아래→위 / burst 가운데서 터짐)
+function emojiFx(d){
+  const { cx, W, H } = vfxSetup();
+  const set = (d && d.emojis && d.emojis.length) ? d.emojis : ["🎉"];
+  const motion = (d && d.motion) || "fall";
+  const N = 44;
+  const parts = Array.from({ length: N }, (_, i) => {
+    const e = set[i % set.length], sz = Math.random()*20+24;
+    if(motion === "rise")
+      return { e, x: Math.random()*W, y: H + Math.random()*H*0.6, vy: -(Math.random()*1.6+1.3),
+               vx: (Math.random()*2-1)*0.5, sz, ph: Math.random()*6, sp: Math.random()*0.05+0.02 };
+    if(motion === "burst"){ const a = Math.random()*Math.PI*2, sp = Math.random()*7.5+3;
+      return { e, x: W/2, y: H*0.42, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp - 2.5, g: 0.16, sz }; }
+    return { e, x: Math.random()*W, y: -Math.random()*H*0.6 - 20, vy: Math.random()*1.9+1.5,
+             vx: (Math.random()*2-1)*0.5, sz, ph: Math.random()*6, sp: Math.random()*0.05+0.02 };
+  });
+  cx.textAlign = "center"; cx.textBaseline = "middle";
+  let f = 0;
+  (function tick(){
+    cx.clearRect(0,0,W,H); f++;
+    parts.forEach(p => {
+      if(motion === "burst"){ p.vy += p.g; p.x += p.vx; p.y += p.vy; }
+      else { p.y += p.vy; p.ph += p.sp; p.x += p.vx + Math.sin(p.ph)*0.9; }
+      cx.font = p.sz + "px serif"; cx.fillText(p.e, p.x, p.y);
+    });
+    if(f < 205) vfxRAF = requestAnimationFrame(tick); else vfxEnd(cx,W,H);
+  })();
+}
+// 불꽃놀이 (여러 발이 순차로 터진다. rainbow: 무지개색)
+function fireworksFx(d){
+  const { cx, W, H } = vfxSetup();
+  const rainbow = !!(d && d.rainbow);
+  const palette = (d && d.colors) || ["#ff5a5a","#ffcf5c","#5b8dff","#5cb85c","#c9a0ff","#ff8a3d"];
+  const launches = Array.from({ length: 7 }, (_, i) => ({
+    t: i*20 + 6, x: W*(0.18 + Math.random()*0.64), y: H*(0.18 + Math.random()*0.36),
+    hue: Math.random()*360 }));
+  let parts = [], f = 0;
+  function burst(x, y, hue){
+    const n = 44;
+    for(let i=0;i<n;i++){ const a = (i/n)*Math.PI*2, sp = Math.random()*3+2.4;
+      parts.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, g: 0.05, life: 1,
+        dec: Math.random()*0.012+0.012,
+        c: rainbow ? `hsl(${(hue + Math.random()*40)|0},100%,${(56+Math.random()*14)|0}%)`
+                   : palette[Math.floor(Math.random()*palette.length)] }); }
+  }
+  (function tick(){
+    cx.globalCompositeOperation = "source-over"; cx.clearRect(0,0,W,H); f++;
+    launches.forEach(L => { if(L.t === f) burst(L.x, L.y, L.hue); });
+    cx.globalCompositeOperation = "lighter";
+    parts.forEach(p => { p.vy += p.g; p.x += p.vx; p.y += p.vy; p.vx *= 0.99; p.vy *= 0.99; p.life -= p.dec;
+      if(p.life > 0){ cx.globalAlpha = Math.max(0, p.life); cx.fillStyle = p.c;
+        cx.beginPath(); cx.arc(p.x, p.y, 2.6, 0, 7); cx.fill(); } });
+    cx.globalAlpha = 1;
+    parts = parts.filter(p => p.life > 0);
+    if(f < 205) vfxRAF = requestAnimationFrame(tick); else vfxEnd(cx,W,H);
   })();
 }
 
@@ -1572,7 +1700,7 @@ async function endGame(color) {
   const moves = game.history.map(h => [h.r, h.c]);
   const msg = document.getElementById("gameMsg");
   if(game.ai){ endAIGame(color === game.ai.color ? "l" : "w", moves, msg); return; }
-  sfx.win(); confetti();
+  sfx.win(); playVictory(winner);
   if(!game.ranked){
     saveGameRecord("omok", game.black, game.white, winner.id, "win", moves, { ranked:false });
     msg.innerHTML = `🎉 <b>${esc(winner.name)}</b> 승리! · ${friendlyWhy()}`; return;
@@ -1710,7 +1838,7 @@ function aiFallback(board, col){
 function endAIGame(result, moves, msg){
   const L = aiLevel(game.ai.level);
   const iWon = result === "w";
-  if(iWon){ sfx.win(); confetti(); } else sfx.draw();
+  if(iWon){ sfx.win(); playVictory(game.ai.color === Omok.BLACK ? game.white : game.black); } else sfx.draw();
   aiRecordAdd(game.ai.level, result);
   aiSay(iWon ? "졌다… 너 잘하는데? 😮" : result === "d" ? "비겼네! 🤝" : "내가 이겼다! 😎");
   const head = iWon ? `🎉 <b>${L.emoji} AI ${L.name}</b>을(를) 이겼어요! 대단해요!`
@@ -1929,7 +2057,7 @@ async function endChess(winnerColor){
   document.getElementById("cResignBtn").disabled = true;
   document.getElementById("cReplayBtn").style.display = "block";
   document.getElementById("cpWhite").classList.remove("turn"); document.getElementById("cpBlack").classList.remove("turn");
-  sfx.win(); confetti();
+  sfx.win(); playVictory(winner);
   const msg = document.getElementById("chessMsg");
   if(!chessGame.ranked){
     save({ ranked:false });
@@ -2033,7 +2161,7 @@ async function endJanggi(winnerColor){
   document.getElementById("jResignBtn").disabled = true;
   document.getElementById("jReplayBtn").style.display = "block";
   document.getElementById("jpRed").classList.remove("turn"); document.getElementById("jpBlue").classList.remove("turn");
-  sfx.win(); confetti();
+  sfx.win(); playVictory(winner);
   const msg = document.getElementById("janggiMsg");
   if(!janggiGame.ranked){
     save({ ranked:false });
@@ -2551,7 +2679,7 @@ async function onlineGameOver(row){
   if(msg){
     let txt;
     if(row.result==="draw") txt="🤝 무승부!";
-    else { const iWon = row.winner_id===onlineMe.id; txt = (iWon?"🎉 승리!":"😢 패배") + (row.result==="resign"?" (기권)":row.result==="timeout"?" (시간패)":""); if(iWon) confetti(); }
+    else { const iWon = row.winner_id===onlineMe.id; txt = (iWon?"🎉 승리!":"😢 패배") + (row.result==="resign"?" (기권)":row.result==="timeout"?" (시간패)":""); if(iWon) playVictory(students.find(s=>s.id===onlineMe.id)); }
     const tester = [row.host_id, row.guest_id].some(id => {
       const s = students.find(x => x.id === id); return s && s.is_tester;
     });

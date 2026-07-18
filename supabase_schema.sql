@@ -24,6 +24,7 @@ alter table students add column if not exists equip_chessboard  text;           
 alter table students add column if not exists equip_chesspiece  text;                           -- 장착한 체스 기물 스킨 id
 alter table students add column if not exists equip_janggiboard text;                           -- 장착한 장기판 스킨 id
 alter table students add column if not exists equip_janggipiece text;                           -- 장착한 장기 기물 스킨 id
+alter table students add column if not exists equip_victory      text;                           -- 장착한 승리 연출 스킨 id
 alter table students add column if not exists is_tester boolean not null default false;         -- 테스터 계정(경기 랭킹 미반영)
 alter table students add column if not exists last_attend date;                                 -- 마지막 출석일(KST)
 alter table students add column if not exists attend_streak int not null default 0;             -- 연속 출석일
@@ -97,7 +98,16 @@ insert into shop_items (id, name, price, kind, data, sort) values
   ('jpiece_wood',   '나무 기물',     200, 'janggipiece', '{"disk":"#e8c98f","text":"#5a3a1a","border":"#5a3a1a"}', 31),
   ('jpiece_ink',    '먹 기물',       250, 'janggipiece', '{"disk":"#efe6d0","text":"#1c1c1c","border":"#1c1c1c"}', 32),
   ('jpiece_gold',   '황금 기물',     300, 'janggipiece', '{"disk":"#fff2c0","text":"#a06a00","border":"#d4a017","glow":"#ffd84d"}', 33),
-  ('jpiece_royal',  '궁중 기물',     400, 'janggipiece', '{"disk":"#3a2c55","text":"#ffd84d","border":"#b79bff","glow":"#a06bff"}', 34)
+  ('jpiece_royal',  '궁중 기물',     400, 'janggipiece', '{"disk":"#3a2c55","text":"#ffd84d","border":"#b79bff","glow":"#a06bff"}', 34),
+  -- 승리 연출(종목 공통): 이기면 승자가 장착한 애니메이션이 화면에 재생됨
+  --   type: confetti(색종이) / emoji(이모지 샤워, motion: fall·rise·burst) / fireworks(불꽃놀이)
+  ('vic_confetti',  '🎉 기본 색종이',   0,   'victory', '{"type":"confetti"}', 40),
+  ('vic_hearts',    '💖 하트 샤워',     200, 'victory', '{"type":"emoji","emojis":["💖","💗","❤️","💕"],"motion":"rise","prevBg":"radial-gradient(circle at 50% 40%,#ff8ab5,#c23a6b)"}', 41),
+  ('vic_stars',     '⭐ 별똥별',        250, 'victory', '{"type":"emoji","emojis":["⭐","🌟","✨"],"motion":"fall","prevBg":"radial-gradient(circle at 50% 30%,#3a4670,#141a33)"}', 42),
+  ('vic_sakura',    '🌸 벚꽃 잔치',     300, 'victory', '{"type":"emoji","emojis":["🌸","🌺","🌼","💮"],"motion":"fall","prevBg":"radial-gradient(circle at 50% 40%,#ffd9e6,#e79ab5)"}', 43),
+  ('vic_crown',     '👑 왕관의 비',     350, 'victory', '{"type":"emoji","emojis":["👑","✨","🏆"],"motion":"fall","prevBg":"radial-gradient(circle at 50% 35%,#7a5c1e,#2e2308)"}', 44),
+  ('vic_fireworks', '🎆 불꽃놀이',      400, 'victory', '{"type":"fireworks","prevBg":"radial-gradient(circle at 50% 55%,#1a2140,#070a18)"}', 45),
+  ('vic_rainbow',   '🌈 무지개 폭죽',   450, 'victory', '{"type":"fireworks","rainbow":true,"prevBg":"radial-gradient(circle at 50% 55%,#241a40,#080614)"}', 46)
 on conflict (id) do update
   set name = excluded.name, price = excluded.price, kind = excluded.kind,
       data = excluded.data, sort = excluded.sort;
@@ -341,7 +351,7 @@ begin
   if it.price > 0 and not (s.owned ? p_item) then raise exception '보유하지 않은 아이템입니다.'; end if;
 
   -- kind 이름 = equip_<kind> 컬럼 (board→equip_board, chesspiece→equip_chesspiece …)
-  if it.kind not in ('board','stone','chessboard','chesspiece','janggiboard','janggipiece') then
+  if it.kind not in ('board','stone','chessboard','chesspiece','janggiboard','janggipiece','victory') then
     raise exception '알 수 없는 스킨 종류입니다: %', it.kind;
   end if;
   execute format('update students set %I = $1 where id = $2', 'equip_' || it.kind)
