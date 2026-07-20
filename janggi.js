@@ -12,7 +12,7 @@
   const col = p => (p ? p[0] : "");
   const typ = p => (p ? p[1] : "");
   const clone = b => b.map(row => row.slice());
-  const inPalace = (r, c) => c >= 3 && c <= 5 && (r <= 2 || r >= 7);
+  const inPalace = (r, c) => c >= 3 && c <= 5 && (r >= 0 && r <= 2 || r >= 7 && r <= 9);
   const DIAG = new Set(["0,3","0,5","1,4","2,3","2,5","7,3","7,5","8,4","9,3","9,5"]);
   const isDiag = (r, c) => DIAG.has(r + "," + c);
 
