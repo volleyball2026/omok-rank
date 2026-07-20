@@ -83,6 +83,17 @@
   .badge-r { flex:none; width:26px; height:26px; border-radius:8px; display:flex; align-items:center;
     justify-content:center; font-weight:800; font-size:12px; color:#fff; }
   .badge-w { background:var(--up); } .badge-l { background:var(--down); }
+  /* 상대별 전적 (head-to-head) */
+  .opp-row { display:flex; align-items:center; gap:10px; padding:12px 12px; margin-bottom:8px; font-size:14px;
+    background:#fff; border-radius:12px; box-shadow:var(--shadow); cursor:pointer; transition:transform .1s; }
+  .opp-row:active { transform:scale(.98); }
+  .hh-head { text-align:center; font-size:16px; margin:2px 0 6px; }
+  .hh-total { text-align:center; font-size:15px; background:#fff7ec; border-radius:12px; padding:10px; margin-bottom:14px; }
+  .hh-row { display:flex; align-items:center; justify-content:space-between; padding:14px 14px; margin-bottom:10px;
+    background:#fff; border-radius:14px; box-shadow:var(--shadow); font-size:15px; }
+  .hh-g { font-weight:800; }
+  .hh-rec { font-size:15px; }
+  .hh-rate { font-size:12.5px; color:var(--sub); font-weight:700; min-width:44px; text-align:right; }
 
   .toast { position:fixed; top:84px; left:50%; transform:translateX(-50%) translateY(-20px); background:#fff;
     border-radius:16px; box-shadow:var(--shadow); padding:16px 20px; z-index:100; opacity:0; pointer-events:none;
@@ -964,22 +975,48 @@ function showResultToast(r) {
 }
 
 // ---------- 상세 전적 ----------
+let detailStudent = null, detailRecords = [];   // 상대별 전적(head-to-head)용 캐시
 async function openDetail(id) {
   openModal("detailBack");
   document.getElementById("detailBody").innerHTML = `<div class="empty">불러오는 중…</div>`;
   try {
     const s = students.find(x=>x.id===id);
-    const { data: hist, error } = await sb.from("match_history").select("*")
-      .or(`winner_id.eq.${id},loser_id.eq.${id}`).order("id",{ascending:false}).limit(30);
-    if(error) throw error;
-    const rows = (hist||[]).map(h => {
+    detailStudent = { id, name: s.name };
+    // 랭킹전 LP 이력(최근 전적) + 전 종목 대국기록(상대별 전적, game_records)
+    const [histRes, recs] = await Promise.all([
+      sb.from("match_history").select("*").or(`winner_id.eq.${id},loser_id.eq.${id}`).order("id",{ascending:false}).limit(30),
+      fetchGameRecords(id, 500),
+    ]);
+    if(histRes.error) throw histRes.error;
+    detailRecords = recs || [];
+    // ---- 상대별 집계 (오목·체스·장기 전부 합산) ----
+    const opp = {};   // oppId -> { name, w, l, d, games }
+    detailRecords.forEach(g => {
+      const meP1 = g.p1_id === id;
+      const oid = meP1 ? g.p2_id : g.p1_id;
+      const oname = meP1 ? g.p2_name : g.p1_name;
+      if(oid == null) return;
+      const o = opp[oid] || (opp[oid] = { name:oname, w:0, l:0, d:0, games:0 });   // 첫 등장(최신) 이름 사용
+      o.games++;
+      if(g.result === "draw" || !g.winner_id) o.d++;
+      else if(g.winner_id === id) o.w++; else o.l++;
+    });
+    const oppList = Object.entries(opp).sort((a,b) => b[1].games - a[1].games);
+    const oppHtml = oppList.length
+      ? oppList.map(([oid,o]) => `<div class="opp-row" onclick="openHeadToHead(${oid})">
+          <span style="flex:1;font-weight:700">🆚 ${esc(o.name)}</span>
+          <span><b class="lp-up">${o.w}승</b> <b class="lp-down">${o.l}패</b>${o.d?` <span style="color:var(--sub);font-weight:800">${o.d}무</span>`:""}</span>
+          <span style="color:var(--orange-deep);font-weight:900;font-size:18px">›</span></div>`).join("")
+      : `<div class="empty" style="padding:10px 0">아직 친구와 둔 기록이 없어요.</div>`;
+    // ---- 최근 랭킹전(LP 이력) ----
+    const rows = (histRes.data||[]).map(h => {
       const win = h.winner_id === id;
       const lp = win ? h.winner_lp_change : h.loser_lp_change;
       return `<div class="hist-item">
         <span class="badge-r ${win?'badge-w':'badge-l'}">${win?'승':'패'}</span>
         <span style="flex:1">vs ${esc(win?h.loser_name:h.winner_name)}</span>
         <span class="${lp>=0?'lp-up':'lp-down'}">${lp>=0?'+':''}${lp} LP</span></div>`;
-    }).join("") || `<div class="empty">아직 전적이 없어요.</div>`;
+    }).join("") || `<div class="empty">아직 랭킹전 기록이 없어요.</div>`;
     document.getElementById("detailBody").innerHTML = `
       <span class="close-x" onclick="closeModal('detailBack')">✕</span>
       <h2>${esc(s.name)}</h2>
@@ -988,12 +1025,41 @@ async function openDetail(id) {
         <span style="font-weight:800;color:#e0a800;margin-left:6px">💰 ${s.points||0} P</span></div>
       <div style="display:flex;gap:10px;text-align:center;margin-bottom:18px">
         ${statBox(s.wins,'승')}${statBox(s.losses,'패')}${statBox(s.win_rate+'%','승률')}</div>
-<!-- 복기·오목 배우기는 기능 개선 전까지 숨김 (추후 재오픈)
-      <button class="btn btn-primary" style="margin:4px 0 8px" onclick="openReplayList(${s.id})">📖 복기 — 내 대국 다시보기</button>
-      <button class="btn btn-ghost" style="margin:0 0 16px" onclick="openCurriculum()">🎓 오목 배우기 — 단계별 문제</button>
--->
-      <h3 style="font-size:15px;margin:14px 0 6px">최근 전적</h3>${rows}`;
+      <h3 style="font-size:15px;margin:16px 0 8px">🆚 상대별 전적 <span style="font-weight:500;font-size:12px;color:var(--sub)">— 친구 이름을 누르면 종목별로!</span></h3>
+      ${oppHtml}
+      <h3 style="font-size:15px;margin:18px 0 6px">📈 최근 랭킹전 (LP)</h3>${rows}`;
   } catch(e){ document.getElementById("detailBody").innerHTML = `<div class="empty">${e.message}</div>`; }
+}
+// 상대별 종목 전적 (오목·체스·장기 각각). detailRecords 캐시에서 계산.
+function openHeadToHead(oppId){
+  const me = detailStudent; if(!me) return;
+  const recs = detailRecords.filter(g => (g.p1_id===me.id && g.p2_id===oppId) || (g.p1_id===oppId && g.p2_id===me.id));
+  const first = recs[0];   // fetchGameRecords 는 최신순 → 최신 이름
+  const oname = first ? (first.p1_id===oppId ? first.p1_name : first.p2_name) : "상대";
+  const tally = { omok:{w:0,l:0,d:0}, chess:{w:0,l:0,d:0}, janggi:{w:0,l:0,d:0} };
+  recs.forEach(g => { const t = tally[g.game_type]; if(!t) return;
+    if(g.result==="draw" || !g.winner_id) t.d++;
+    else if(g.winner_id===me.id) t.w++; else t.l++; });
+  const tot = { w:0, l:0, d:0 };
+  Object.values(tally).forEach(t => { tot.w+=t.w; tot.l+=t.l; tot.d+=t.d; });
+  const gRow = (gt, icon, label) => {
+    const t = tally[gt], n = t.w+t.l+t.d;
+    const rate = (t.w+t.l) ? Math.round(t.w/(t.w+t.l)*100) : null;
+    const rec = n ? `<b class="lp-up">${t.w}</b>승 <b class="lp-down">${t.l}</b>패${t.d?` <span style="color:var(--sub);font-weight:800">${t.d}무</span>`:""}`
+                  : `<span style="color:var(--sub)">아직 안 둠</span>`;
+    return `<div class="hh-row"><span class="hh-g">${icon} ${label}</span>
+      <span class="hh-rec">${rec}</span>
+      <span class="hh-rate">${rate!=null?`승률 ${rate}%`:"—"}</span></div>`;
+  };
+  document.getElementById("detailBody").innerHTML = `
+    <span class="close-x" onclick="closeModal('detailBack')">✕</span>
+    <h2>🆚 상대별 전적</h2>
+    <div class="hh-head"><b>${esc(me.name)}</b> <span style="color:var(--sub)">vs</span> <b>${esc(oname)}</b></div>
+    <div class="hh-total">종합 <b class="lp-up">${tot.w}승</b> <b class="lp-down">${tot.l}패</b>${tot.d?` <span style="font-weight:800">${tot.d}무</span>`:""}
+      ${(tot.w+tot.l)?` · 승률 ${Math.round(tot.w/(tot.w+tot.l)*100)}%`:""}</div>
+    ${gRow("omok","⚫","오목")}${gRow("chess","♟️","체스")}${gRow("janggi","🏯","장기")}
+    <div class="setup-note" style="margin-top:10px">랭킹전·친선전·온라인 실제 대국 기록이에요 (AI 연습은 빼고요)</div>
+    <button class="mini-btn" style="margin-top:12px" onclick="openDetail(${me.id})">← ${esc(me.name)} 페이지로</button>`;
 }
 
 // ==================== 관리자 모드 ====================
