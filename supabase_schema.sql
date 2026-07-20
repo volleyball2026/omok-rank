@@ -579,7 +579,7 @@ begin
   insert into online_games(code, host_id, host_name, time_main, time_inc, ranked, host_color, game_type, turn, host_ms, guest_ms)
   values (p_code, p_host_id, p_host_name, p_main, p_inc, p_ranked, coalesce(p_host_color,'black'),
           coalesce(p_game_type,'omok'),
-          case when p_game_type='chess' then 'white' else 'black' end,   -- 체스는 백 선공
+          case when coalesce(p_game_type,'omok')='omok' then 'black' else 'white' end,   -- 오목=흑 선공 / 체스=백·장기=한(white) 선공
           case when p_main>0 then p_main*1000 end, case when p_main>0 then p_main*1000 end)
   returning * into g;
   return g;
@@ -655,7 +655,7 @@ begin
   if g.rematch_offer is not null and g.rematch_offer <> p_player then   -- 상대가 이미 요청 -> 재시작
     update online_games set
       moves='[]'::jsonb, winner_id=null, result=null, status='playing',
-      turn = case when g.game_type='chess' then 'white' else 'black' end,
+      turn = case when g.game_type='omok' then 'black' else 'white' end,   -- 오목=흑 / 체스·장기=white 선공
       host_color = case when host_color='black' then 'white' else 'black' end,   -- 색 교대
       host_ms = case when time_main>0 then time_main*1000 end,
       guest_ms = case when time_main>0 then time_main*1000 end,
